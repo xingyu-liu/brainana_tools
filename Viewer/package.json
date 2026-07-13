@@ -1,0 +1,22 @@
+{
+  "name": "brainana-viewer",
+  "private": true,
+  "version": "2.1.1",
+  "type": "module",
+  "scripts": {
+    "dev": "node server.mjs",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "start": "node server.mjs",
+    "test": "node scripts/run-tests.mjs"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.1.1"
+  },
+  "dependencies": {
+    "@niivue/niivue": "^0.69.0",
+    "fflate": "^0.8.2",
+    "nifti-reader-js": "^0.8.0"
+  }
+}
