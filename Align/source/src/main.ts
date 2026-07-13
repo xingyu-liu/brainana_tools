@@ -24,7 +24,7 @@ const planeTypes: Record<Plane, SLICE_TYPE> = {
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
 <header class="topbar">
-  <div class="brand">Brainana Align <span>v0.16.0-parity.12</span></div>
+  <div class="brand">Brainana Align <span>v0.16.0-parity.13</span></div>
   <div class="workflow-group image-loads">
     <label class="load compact-load" title="Load an MRI volume"><input id="mri-file" type="file" multiple accept=".nii,.nii.gz,.hdr,.img,.img.gz,.head,.brik,.brik.gz,.mgh,.mgz,.nrrd,.nhdr,.mif,.mha,.mhd,.raw,.v,.v16,.vmr,.npy,.npz,.fib,.src,.gz,application/gzip,application/x-gzip,application/octet-stream"><strong id="mri-name">Load MRI</strong></label>
     <label class="load compact-load" title="Load a CT volume"><input id="ct-file" type="file" multiple accept=".nii,.nii.gz,.hdr,.img,.img.gz,.head,.brik,.brik.gz,.mgh,.mgz,.nrrd,.nhdr,.mif,.mha,.mhd,.raw,.v,.v16,.vmr,.npy,.npz,.fib,.src,.gz,application/gzip,application/x-gzip,application/octet-stream"><strong id="ct-name">Load CT</strong></label>
@@ -48,7 +48,7 @@ app.innerHTML = `
     <div class="column-head"></div><div class="column-head">Sagittal</div><div class="column-head">Coronal</div><div class="column-head">Axial</div>
     ${(['mri','ct'] as Modality[]).map(modality => `
       <div class="row-head"><strong>${modality.toUpperCase()}</strong><small id="${modality}-coords">x — y — z —</small></div>
-      ${(['sagittal','coronal','axial'] as Plane[]).map(plane => `<div class="view-card" data-modality="${modality}" data-plane="${plane}"><canvas id="${modality}-${plane}"></canvas><svg class="marker-overlay" id="${modality}-${plane}-overlay"></svg><div class="optimization-window-layer" id="${modality}-${plane}-window-layer"></div></div>`).join('')}
+      ${(['sagittal','coronal','axial'] as Plane[]).map(plane => `<div class="view-card" data-modality="${modality}" data-plane="${plane}"><canvas id="${modality}-${plane}"></canvas><svg class="marker-overlay" id="${modality}-${plane}-overlay"></svg><div class="optimization-window-layer" id="${modality}-${plane}-window-layer"></div><div class="image-placeholder" id="${modality}-${plane}-placeholder">No ${modality.toUpperCase()} selected</div></div>`).join('')}
     `).join('')}
     <div class="row-head review-head"><strong>OVERLAY</strong><small id="review-label">Fit a transform to review alignment</small></div>
     ${(['sagittal','coronal','axial'] as Plane[]).map(plane => `<div class="view-card review-card" data-plane="${plane}"><canvas id="review-${plane}"></canvas><svg class="marker-overlay" id="review-${plane}-overlay"></svg><div class="review-placeholder">Fit a rigid transform to display the aligned overlay</div></div>`).join('')}
@@ -178,6 +178,17 @@ let definingWindows = false
 let windowDrag: { view: View; startMm: Vec3; preview: HTMLDivElement } | null = null
 
 function setStatus(text: string, error = false) { statusEl.textContent = text; statusEl.classList.toggle('error', error) }
+
+function setImagePlaceholder(modality: Modality, mode: 'empty' | 'loading' | 'hidden', detail?: string) {
+  const label = modality.toUpperCase()
+  for (const plane of ['sagittal','coronal','axial'] as Plane[]) {
+    const placeholder = document.querySelector<HTMLDivElement>(`#${modality}-${plane}-placeholder`)!
+    placeholder.classList.toggle('hidden', mode === 'hidden')
+    placeholder.classList.toggle('loading', mode === 'loading')
+    if (mode === 'empty') placeholder.textContent = `No ${label} selected`
+    else if (mode === 'loading') placeholder.textContent = detail ? `Loading ${label}: ${detail}` : `Loading ${label}…`
+  }
+}
 function snapshot() { history.push(structuredClone(landmarks)); if (history.length > 40) history.shift() }
 
 const wheelSliceAccumulator = new WeakMap<HTMLCanvasElement, number>()
@@ -414,19 +425,27 @@ async function loadFiles(modality: Modality, files: File[]) {
     throw new Error('Unsupported image format. Select a standard volumetric neuroimaging file.')
   }
   const displayName = files.length === 1 ? files[0].name : `${files[0].name} + ${files.length - 1} paired file${files.length === 2 ? '' : 's'}`
+  const hadExistingImage = Boolean(loaded[modality])
+  setImagePlaceholder(modality, 'loading', displayName)
   setStatus(`Loading ${displayName}…`)
-  const nvImage = await NVImage.loadFromFile({ file: files.length === 1 ? files[0] : files, name: files[0].name })
-  const raw = rawFromNVImage(nvImage)
-  loaded[modality] = { name: displayName, raw, nvImage, sourceFiles: files.map(file => file.name) }
-  document.querySelector<HTMLElement>(`#${modality}-name`)!.textContent = displayName
-  for (const view of Object.values(views[modality])) {
-    while (view.nv.volumes.length) view.nv.removeVolumeByIndex(0)
-    view.nv.addVolume(nvImage.clone())
+  try {
+    const nvImage = await NVImage.loadFromFile({ file: files.length === 1 ? files[0] : files, name: files[0].name })
+    const raw = rawFromNVImage(nvImage)
+    loaded[modality] = { name: displayName, raw, nvImage, sourceFiles: files.map(file => file.name) }
+    document.querySelector<HTMLElement>(`#${modality}-name`)!.textContent = displayName
+    for (const view of Object.values(views[modality])) {
+      while (view.nv.volumes.length) view.nv.removeVolumeByIndex(0)
+      view.nv.addVolume(nvImage.clone())
+    }
+    currentMm[modality] = applyAffine(raw.affine, [(raw.dims[0]-1)/2,(raw.dims[1]-1)/2,(raw.dims[2]-1)/2])
+    gotoMm(modality, currentMm[modality]!)
+    renderMarkers(modality)
+    setImagePlaceholder(modality, 'hidden')
+    setStatus(`${modality.toUpperCase()} loaded: ${raw.dims.join(' × ')} voxels from ${files.length} file${files.length === 1 ? '' : 's'}.`)
+  } catch (error) {
+    setImagePlaceholder(modality, hadExistingImage ? 'hidden' : 'empty')
+    throw error
   }
-  currentMm[modality] = applyAffine(raw.affine, [(raw.dims[0]-1)/2,(raw.dims[1]-1)/2,(raw.dims[2]-1)/2])
-  gotoMm(modality, currentMm[modality]!)
-  renderMarkers(modality)
-  setStatus(`${modality.toUpperCase()} loaded: ${raw.dims.join(' × ')} voxels from ${files.length} file${files.length === 1 ? '' : 's'}.`)
 }
 
 function handleLocation(modality: Modality, mm: number[] | undefined, sourcePlane?: Plane) {

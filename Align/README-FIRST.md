@@ -1,7 +1,5 @@
-# Brainana Align 0.16.0-parity.12
+# Brainana Align 0.16.0-parity.13
 
-This is the complete self-contained macOS release. No Node, npm, Python, Homebrew, NVM, Conda, or other runtime installation is required.
+Open **Brainana Align.app**. The application is fully self-contained and uses the macOS default browser. No Node, npm, Python, Homebrew, NVM, Conda, or other installation is required.
 
-This release replaces the optimization-window input system with one shared interaction layer for all six MRI and CT slice views and corrects constrained-sampling behavior.
-
-See `Documentation/CHANGELOG-0.16.0-parity.12.md` and `Documentation/VALIDATION-0.16.0-parity.12.md`.
+This release replaces the per-panel optimization-window event patches with one shared window layer and one shared drawing implementation used by all six MRI and CT panels. A missing window in any plane is unrestricted for that plane. Only defined windows constrain automatic refinement.

@@ -24,3 +24,5 @@
 .optimization-window-layer.active{pointer-events:auto;cursor:crosshair;touch-action:none}
 .optimization-window-box{position:absolute;border:2px dashed #44d7ff;background:rgba(68,215,255,.12);pointer-events:none}
 .optimization-window-box.preview{background:rgba(68,215,255,.2)}
+
+.image-placeholder{position:absolute;inset:0;z-index:4;display:flex;align-items:center;justify-content:center;padding:20px;text-align:center;color:#8fa5ba;background:radial-gradient(circle at center,rgba(20,34,48,.88),rgba(3,7,12,.97));font-size:13px;font-weight:600;pointer-events:none}.image-placeholder.loading{color:#bdd4e8}.image-placeholder.hidden{display:none}

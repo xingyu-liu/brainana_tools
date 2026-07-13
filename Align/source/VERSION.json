@@ -1,7 +1,7 @@
 {
   "app": "Brainana Align",
-  "version": "0.16.0-parity.12",
-  "buildId": "parity-12",
+  "version": "0.16.0-parity.13",
+  "buildId": "parity-13",
   "behaviorReference": "0.15.4",
   "readableSourceBase": "0.11.1",
   "frontendStatus": "Production frontend built entirely from readable TypeScript source; no recovered application bundle is loaded",

@@ -39,10 +39,10 @@ Performance and reliability pass: coalesced redraws, cancellable remote loading,
 Automatic operating-system-assigned browser ports replace manual port entry and collision dialogs. The default browser opens only after the assigned local server is healthy.
 
 
-## 0.16.0-parity.12
+## 0.16.0-parity.11
 
 Robust per-launch port handshake, synchronous atomic port publication, explicit startup errors, native Bash timing loops, and consistent IPv4 loopback URLs.
-# Brainana Align 0.16.0-parity.12
+# Brainana Align 0.16.0-parity.11
 
 ## Fixed
 
@@ -55,6 +55,6 @@ Robust per-launch port handshake, synchronous atomic port publication, explicit 
 
 - Rigid fitting, manual transforms, normalized mutual-information calculation, ROI handling, export calculations, workstation access, and startup/port behavior are unchanged from parity.9.
 
-## 0.16.0-parity.12
+## 0.16.0-parity.13
 
-Rebuilt the packaged frontend from source, fixed MRI axial optimization-window capture, and added source-to-package parity validation.
+Corrected initial MRI and CT panel messaging so that Loading is shown only during an actual file load.

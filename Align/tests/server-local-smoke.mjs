@@ -7,7 +7,9 @@ const root=fs.mkdtempSync(path.join(os.tmpdir(),'ba-smoke-'))
 const handshake=fs.mkdtempSync(path.join(os.tmpdir(),'ba-port-'))
 const portFile=path.join(handshake,'port')
 fs.writeFileSync(path.join(root,'x.nii'),Buffer.from([1,2,3]))
-const p=spawn(process.execPath,['source/server.mjs','--port','0','--port-file',portFile,'--root',root],{stdio:['ignore','pipe','pipe']})
+const testDir=path.dirname(new URL(import.meta.url).pathname)
+const serverPath=path.resolve(testDir,'../source/server.mjs')
+const p=spawn(process.execPath,[serverPath,'--port','0','--port-file',portFile,'--root',root],{stdio:['ignore','pipe','pipe']})
 let stderr='';p.stderr.on('data',d=>stderr+=d)
 try{
   let port=0
