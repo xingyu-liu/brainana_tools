@@ -1,5 +1,5 @@
-# Brainana Align 0.16.0-recovery.1
+# Brainana Align 0.16.0-parity.6
 
-This release restores the complete v0.15.4 user interface inside a fully self-contained dual-architecture macOS application and replaces the old remote Node/web-server deployment with a local bundled server and SSH filesystem access. No Node, npm, Python, Homebrew, NVM, or Conda installation is required on the Mac or workstation.
+Open **Brainana Align.app**. The application is self-contained and uses the macOS default browser. No Node, npm, Python, Homebrew, NVM, Conda, or other installation is required.
 
-The v0.15.4 production frontend bundle is retained unchanged in this recovery release to preserve behavior. The readable v0.11.1 TypeScript source and all recovered readable launcher/server materials are included. Full line-by-line reconstruction of the newer frontend into readable TypeScript remains ongoing and is explicitly not claimed as complete.
+This release fixes the intermittent `localhost refused to connect` page seen when the default browser was closed. The launcher now opens the browser immediately after the bundled local server becomes ready. Registration and export calculations are unchanged.

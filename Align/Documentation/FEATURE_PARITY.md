@@ -2,7 +2,7 @@
 
 This release reconstructs the retained v0.15.4 frontend behavior in readable TypeScript. The recovered minified frontend and injected export patch are not part of the production runtime.
 
-| Feature | v0.15.4 reference | 0.16.0-parity.4 | Source status |
+| Feature | v0.15.4 reference | 0.16.0-parity.6 | Source status |
 |---|---:|---:|---|
 | MRI and CT loading | Yes | Yes | Readable TypeScript |
 | Landmark editing | Yes | Yes | Readable TypeScript |

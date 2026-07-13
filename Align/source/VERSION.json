@@ -1,9 +1,9 @@
 {
   "app": "Brainana Align",
-  "version": "0.16.0-parity.4",
-  "buildId": "parity-4",
+  "version": "0.16.0-parity.6",
+  "buildId": "parity-6",
   "behaviorReference": "0.15.4",
   "readableSourceBase": "0.11.1",
-  "frontendStatus": "Recovered v0.15.4 production bundle retained unchanged while readable TypeScript reconstruction continues",
+  "frontendStatus": "Production frontend built entirely from readable TypeScript source; no recovered application bundle is loaded",
   "architecture": "Bundled local Node server with local or SSH filesystem adapter; no remote runtime or remote web server"
 }

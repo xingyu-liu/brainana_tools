@@ -3,8 +3,8 @@ set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RES="$APP_ROOT/Resources"
-VERSION="0.16.0-parity.4"
-BUILD_ID="parity-4"
+VERSION="0.16.0-parity.6"
+BUILD_ID="parity-6"
 
 show_error() {
   local message="$1"
@@ -155,7 +155,12 @@ EOF_PROFILE
 fi
 
 [[ "$PORT" =~ ^[0-9]+$ ]] || { show_error "Browser port must be a number."; exit 35; }
-PORT="$(freeport "$PORT")"
+if /usr/sbin/lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  NEXT_PORT="$(freeport "$((PORT+1))")"
+  PORT_CHOICE="$(/usr/bin/osascript -e 'on run a' -e 'set p to button returned of (display dialog ("Port " & item 1 of a & " is already in use. Use port " & item 2 of a & " instead?") with title "Brainana Align" buttons {"Cancel", "Use Available Port"} default button "Use Available Port")' -e 'end run' -- "$PORT" "$NEXT_PORT")" || exit 0
+  [[ "$PORT_CHOICE" == "Use Available Port" ]] || exit 0
+  PORT="$NEXT_PORT"
+fi
 
 echo "Brainana Align"
 echo "Version: $VERSION"
@@ -192,27 +197,36 @@ cleanup() {
 trap cleanup EXIT
 
 URL="http://localhost:$PORT"
-echo "Requesting default browser launch immediately: $URL"
-(
-  /usr/bin/open "$URL" >/dev/null 2>&1
-) &
-OPEN_PID=$!
+echo "Waiting briefly for the bundled server before opening the default browser: $URL"
 
-# Keep readiness checking for diagnostics, but do not hold the browser closed while
-# the bundled server starts. A cold browser launch normally takes longer than the
-# server needs to begin listening, so the first page request reaches the live app.
+# Wait until the lightweight health endpoint is live before asking macOS to open
+# the URL. This prevents a cold browser launch from reaching localhost before the
+# server is listening, while adding only the actual server startup time.
+READY=0
 for _ in $(seq 1 120); do
   if /usr/bin/curl --connect-timeout 0.2 --max-time 0.5 -fsS "$URL/api/health" >/dev/null 2>&1; then
-    echo "Local server ready; browser launch was requested with PID $OPEN_PID."
-    wait "$PID"
-    exit $?
+    READY=1
+    break
   fi
   if ! kill -0 "$PID" 2>/dev/null; then
     wait "$PID" || true
     show_error "The local Brainana Align server stopped before becoming ready. See $LOG_FILE for details."
     exit 34
   fi
-  /bin/sleep 0.1
+  /bin/sleep 0.05
 done
-show_error "The local Brainana Align server did not become ready. The browser was opened, but the app could not start. See $LOG_FILE for details."
-exit 34
+
+if [[ "$READY" -ne 1 ]]; then
+  show_error "The local Brainana Align server did not become ready. See $LOG_FILE for details."
+  exit 34
+fi
+
+echo "Local server ready. Opening the default browser: $URL"
+(
+  /usr/bin/open "$URL" >/dev/null 2>&1
+) &
+OPEN_PID=$!
+echo "Default-browser launch requested with PID $OPEN_PID."
+
+wait "$PID"
+exit $?

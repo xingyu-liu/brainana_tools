@@ -1,4 +1,4 @@
-# Brainana Align 0.16.0-parity.4
+# Brainana Align 0.16.0-parity.6
 
 This release restores the complete v0.15.4 user interface inside a fully self-contained dual-architecture macOS application and replaces the old remote Node/web-server deployment with a local bundled server and SSH filesystem access. No Node, npm, Python, Homebrew, NVM, or Conda installation is required on the Mac or workstation.
 

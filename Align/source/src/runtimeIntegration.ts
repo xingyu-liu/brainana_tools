@@ -43,6 +43,7 @@ export function installRuntimeIntegration(loadFiles: LoadFiles, setStatus: Statu
   let config: RuntimeConfig | null = null
   let browserModality: Modality = 'mri'
   let browserPath = ''
+  let activeLoadController: AbortController | null = null
 
   const style = document.createElement('style')
   style.textContent = `
@@ -71,7 +72,11 @@ export function installRuntimeIntegration(loadFiles: LoadFiles, setStatus: Statu
   const listElement = browser.querySelector<HTMLDivElement>('#server-browser-list')!
   const loadButton = browser.querySelector<HTMLButtonElement>('#server-browser-load')!
   const selectedPaths = () => Array.from(listElement.querySelectorAll<HTMLInputElement>('input:checked')).map(input => input.value)
-  const closeBrowser = () => browser.classList.add('hidden')
+  const closeBrowser = () => {
+    if (activeLoadController) activeLoadController.abort()
+    activeLoadController = null
+    browser.classList.add('hidden')
+  }
 
   async function listPath(path = '') {
     const data = await getJson<ServerList>(`/api/list?path=${encodeURIComponent(path)}`)
@@ -102,16 +107,33 @@ export function installRuntimeIntegration(loadFiles: LoadFiles, setStatus: Statu
 
   async function loadSelection() {
     const paths = selectedPaths(); if (!paths.length) return
-    loadButton.disabled = true; setStatus(`Loading ${paths.length} file${paths.length === 1 ? '' : 's'} from ${config?.label ?? 'server'}…`)
+    activeLoadController?.abort()
+    const controller = new AbortController()
+    activeLoadController = controller
+    loadButton.disabled = true
+    const cancelButton = browser.querySelector<HTMLButtonElement>('#server-browser-cancel')!
+    cancelButton.textContent = 'Cancel loading'
     try {
       const files: File[] = []
-      for (const path of paths) {
-        const response = await fetch(`/api/file?path=${encodeURIComponent(path)}`)
+      for (let index = 0; index < paths.length; index++) {
+        const path = paths[index]
+        setStatus(`Loading ${index + 1} of ${paths.length}: ${path.split('/').pop() || path}…`)
+        const response = await fetch(`/api/file?path=${encodeURIComponent(path)}`, { signal: controller.signal })
         if (!response.ok) throw new Error((await response.text()) || `Unable to load ${path}`)
-        const blob = await response.blob(); files.push(new File([blob], path.split('/').pop() || 'volume', { type: blob.type || 'application/octet-stream' }))
+        const blob = await response.blob()
+        files.push(new File([blob], path.split('/').pop() || 'volume', { type: blob.type || 'application/octet-stream' }))
       }
-      closeBrowser(); await loadFiles(browserModality, files)
-    } finally { loadButton.disabled = false }
+      activeLoadController = null
+      browser.classList.add('hidden')
+      await loadFiles(browserModality, files)
+    } catch (error) {
+      if (controller.signal.aborted) setStatus('Workstation file loading cancelled.')
+      else throw error
+    } finally {
+      if (activeLoadController === controller) activeLoadController = null
+      cancelButton.textContent = 'Cancel'
+      loadButton.disabled = false
+    }
   }
 
   browser.querySelector('#server-browser-close')!.addEventListener('click', closeBrowser)

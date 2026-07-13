@@ -24,7 +24,7 @@ const planeTypes: Record<Plane, SLICE_TYPE> = {
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
 <header class="topbar">
-  <div class="brand">Brainana Align <span>v0.16.0-parity.2</span></div>
+  <div class="brand">Brainana Align <span>v0.16.0-parity.6</span></div>
   <div class="workflow-group image-loads">
     <label class="load compact-load" title="Load an MRI volume"><input id="mri-file" type="file" multiple accept=".nii,.nii.gz,.hdr,.img,.img.gz,.head,.brik,.brik.gz,.mgh,.mgz,.nrrd,.nhdr,.mif,.mha,.mhd,.raw,.v,.v16,.vmr,.npy,.npz,.fib,.src,.gz,application/gzip,application/x-gzip,application/octet-stream"><strong id="mri-name">Load MRI</strong></label>
     <label class="load compact-load" title="Load a CT volume"><input id="ct-file" type="file" multiple accept=".nii,.nii.gz,.hdr,.img,.img.gz,.head,.brik,.brik.gz,.mgh,.mgz,.nrrd,.nhdr,.mif,.mha,.mhd,.raw,.v,.v16,.vmr,.npy,.npz,.fib,.src,.gz,application/gzip,application/x-gzip,application/octet-stream"><strong id="ct-name">Load CT</strong></label>
@@ -572,7 +572,18 @@ function startMarkerDrag(ev: PointerEvent, view: View, id: number) {
   window.addEventListener('pointerup',up)
 }
 
-function renderAll() { renderMarkers('mri'); renderMarkers('ct'); renderReviewMarkers(); renderLandmarks() }
+let renderAllFrame: number | null = null
+function renderAllNow() {
+  renderAllFrame = null
+  renderMarkers('mri')
+  renderMarkers('ct')
+  renderReviewMarkers()
+  renderLandmarks()
+}
+function renderAll() {
+  if (renderAllFrame !== null) return
+  renderAllFrame = requestAnimationFrame(renderAllNow)
+}
 
 function renderLandmarks() {
   document.querySelector('#pair-count')!.textContent = `${landmarks.length} pair${landmarks.length === 1 ? '' : 's'}`
