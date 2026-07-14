@@ -1,7 +1,7 @@
 {
   "name": "brainana-align",
   "private": true,
-  "version": "0.16.22-lifecycle.7",
+  "version": "0.16.26-docs.1",
   "type": "module",
   "scripts": {
     "version:generate": "node ../scripts/generate-version.mjs",
@@ -10,7 +10,7 @@
     "preview": "vite preview --host 0.0.0.0",
     "test:server": "node ../tests/server-local-smoke.mjs",
     "verify:release": "node ../scripts/verify-release.mjs",
-    "check": "npm run build && npm run test:identity && npm run test:architecture && npm run test:coordinates && npm run test:windows && npm run test:window-interaction && npm run test:sessions && npm run test:runtime && npm run test:scientific && npm run test:server && npm run test:security && npm run test:browser && npm run test:browser-compat && npm run test:storage && npm run test:local-export && npm run test:platform && npm run test:sftp && npm run test:launch-handshake && npm run test:macos-runtime && npm run test:lifecycle && npm run test:lifecycle-detach && npm run test:lifecycle-launchd && npm run test:ssh-cancel && npm run test:ssh-terminal",
+    "check": "npm run build && npm run test:identity && npm run test:documentation && npm run test:architecture && npm run test:coordinates && npm run test:windows && npm run test:window-interaction && npm run test:sessions && npm run test:runtime && npm run test:scientific && npm run test:server && npm run test:security && npm run test:browser && npm run test:browser-compat && npm run test:browser-matrix && npm run test:storage && npm run test:local-export && npm run test:platform && npm run test:sftp && npm run test:launch-handshake && npm run test:macos-runtime && npm run test:lifecycle && npm run test:lifecycle-detach && npm run test:lifecycle-launchd && npm run test:ssh-cancel && npm run test:ssh-terminal && npm run test:local-startup",
     "test:identity": "node ../scripts/check-release-identity.mjs",
     "test:windows": "node ../tests/optimization-windows-unit.mjs",
     "test:architecture": "node ../tests/source-architecture.mjs",
@@ -32,7 +32,10 @@
     "test:lifecycle-detach": "python3 ../tests/lifecycle-detach-stress.py",
     "test:lifecycle-launchd": "bash ../tests/macos-launchd-lifecycle.sh",
     "test:ssh-cancel": "bash ../tests/macos-ssh-cancellation.sh",
-    "test:ssh-terminal": "bash ../tests/macos-ssh-terminal-launch.sh"
+    "test:ssh-terminal": "bash ../tests/macos-ssh-terminal-launch.sh",
+    "test:browser-matrix": "node ../tests/browser-engine-matrix.mjs",
+    "test:local-startup": "bash ../tests/macos-local-startup.sh",
+    "test:documentation": "node ../tests/documentation-layout.mjs"
   },
   "dependencies": {
     "@niivue/niivue": "^0.69.0",

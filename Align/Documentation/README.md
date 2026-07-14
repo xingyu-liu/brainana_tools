@@ -1,5 +1,16 @@
-# Brainana Align 0.16.0-parity.11
+# Brainana Align documentation
 
-This release restores the complete v0.15.4 user interface inside a fully self-contained dual-architecture macOS application and replaces the old remote Node/web-server deployment with a local bundled server and SSH filesystem access. No Node, npm, Python, Homebrew, NVM, or Conda installation is required on the Mac or workstation.
+Brainana Align is a self-contained browser-based MRI and CT alignment application. The current macOS package includes Apple Silicon and Intel Node runtimes, while the shared source contains the platform-neutral frontend, server, scientific code, tests, and platform packaging foundations.
 
-The v0.15.4 production frontend bundle is retained unchanged in this recovery release to preserve behavior. The readable v0.11.1 TypeScript source and all recovered readable launcher/server materials are included. Full line-by-line reconstruction of the newer frontend into readable TypeScript remains ongoing and is explicitly not claimed as complete.
+## Documentation set
+
+- `BUILD.md`: build and packaging instructions
+- `CHANGELOG.md`: running release history, newest first
+- `ARCHITECTURE.md`: current architecture and platform boundaries
+- `FEATURE_PARITY.md`: feature reconstruction and parity status
+- `VALIDATION.md`: current validation results and remaining native checks
+- `TECHNICAL_FINDINGS.md`: reconstruction findings and design rationale
+
+Browser support requirements for Safari, Firefox, Chrome, and Edge are incorporated into `ARCHITECTURE.md` and `VALIDATION.md`.
+
+Release identity and file inventories are stored separately in `VERSION.json`, `RELEASE_CONTENTS.txt`, and `SHA256SUMS.txt`.

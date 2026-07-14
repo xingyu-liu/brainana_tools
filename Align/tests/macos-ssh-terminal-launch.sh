@@ -36,7 +36,7 @@ target='user@example.invalid'
     printf '%s\n' "trap 'rc=\$?; write_status \"\$rc\"' EXIT"
     printf 'printf "%%s\\n" "$$" > "$PID_FILE"\n'
     printf 'printf "started\\n" > "$STARTED_FILE"\n'
-    printf '/usr/bin/ssh -M -S %q -o ControlPersist=600 -o ExitOnForwardFailure=yes -fNT %q\n' "$socket" "$target"
+    printf '/usr/bin/ssh -M -S %q -o ControlPersist=600 -o ExitOnForwardFailure=yes -NT %q\n' "$socket" "$target"
     printf 'rc=$?\nwrite_status "$rc"\nexit "$rc"\n'
   } > "$helper"
 )

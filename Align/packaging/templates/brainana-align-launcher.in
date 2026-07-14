@@ -175,6 +175,7 @@ open_interactive_ssh() {
   local pid_file="$auth_dir/helper.pid"
   local helper="$auth_dir/run-ssh-auth.command"
   local started_file="$auth_dir/started"
+  local diagnostic_file="$auth_dir/ssh-diagnostic.log"
   /bin/rm -rf "$auth_dir"
   /bin/mkdir -p "$auth_dir"
   /bin/chmod 700 "$auth_dir"
@@ -190,13 +191,15 @@ open_interactive_ssh() {
     printf 'STATUS_FILE=%q\n' "$status_file"
     printf 'PID_FILE=%q\n' "$pid_file"
     printf 'STARTED_FILE=%q\n' "$started_file"
+    printf 'DIAGNOSTIC_FILE=%q\n' "$diagnostic_file"
     printf 'write_status() { local rc="$1"; local tmp="${STATUS_FILE}.tmp.$$"; [[ -e "$STATUS_FILE" ]] || { printf "%%s\\n" "$rc" > "$tmp" && /bin/mv -f "$tmp" "$STATUS_FILE"; }; }\n'
     printf 'cancelled() { write_status 130; exit 130; }\n'
     printf 'trap cancelled HUP INT TERM\n'
     printf '%s\n' "trap 'rc=\$?; write_status \"\$rc\"' EXIT"
     printf 'printf "%%s\\n" "$$" > "$PID_FILE"\n'
     printf 'printf "started\\n" > "$STARTED_FILE"\n'
-    printf '/usr/bin/ssh -M -S %q -o ControlPersist=600 -o ExitOnForwardFailure=yes -fNT %q\n' "$socket" "$target"
+    printf 'printf "SSH helper started at %%s\\n" "$(/bin/date -u +%%Y-%%m-%%dT%%H:%%M:%%SZ)" > "$DIAGNOSTIC_FILE"\n'
+    printf '/usr/bin/ssh -M -S %q -o ControlPersist=600 -o ExitOnForwardFailure=yes -NT %q\n' "$socket" "$target"
     printf 'rc=$?\nwrite_status "$rc"\nexit "$rc"\n'
   } > "$helper"
   /bin/chmod 700 "$helper"
@@ -236,8 +239,8 @@ open_interactive_ssh() {
     if [[ -s "$status_file" ]]; then
       local rc
       rc="$(/bin/cat "$status_file" 2>/dev/null || echo 1)"
-      /bin/rm -rf "$auth_dir"
       if [[ "$rc" == "130" || "$rc" == "129" || "$rc" == "143" ]]; then
+        /bin/rm -rf "$auth_dir"
         echo "SSH authentication to $target was cancelled."
         return 2
       fi
@@ -251,14 +254,16 @@ open_interactive_ssh() {
           /bin/sleep 0.1
           ready_i=$((ready_i+1))
         done
-        show_error "SSH reported success, but the persistent connection did not become ready. Review the Terminal window and launch log, then try again."
+        echo "SSH diagnostic directory retained: $auth_dir"
+        show_error "SSH reported success, but the persistent connection did not become ready. Diagnostics were retained at: $auth_dir"
         return 1
       fi
-      show_error "SSH connection to $target failed (error $rc). Review the Terminal window and launch log, then try again."
+      echo "SSH diagnostic directory retained: $auth_dir"
+      show_error "SSH connection to $target failed (error $rc). Diagnostics were retained at: $auth_dir"
       return 1
     fi
     if [[ "$helper_seen" -eq 1 && "$helper_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$helper_pid" 2>/dev/null; then
-      /bin/rm -rf "$auth_dir"
+      echo "SSH diagnostic directory retained: $auth_dir"
       echo "SSH authentication helper ended before a connection was established."
       return 2
     fi
@@ -266,8 +271,8 @@ open_interactive_ssh() {
     i=$((i+1))
   done
   if [[ "$helper_pid" =~ ^[0-9]+$ ]]; then kill "$helper_pid" >/dev/null 2>&1 || true; fi
-  /bin/rm -rf "$auth_dir"
-  show_error "SSH authentication did not complete within five minutes. Close the authentication Terminal tab and try again."
+  echo "SSH diagnostic directory retained: $auth_dir"
+  show_error "SSH authentication did not complete within five minutes. Close the authentication Terminal tab and try again. Diagnostics were retained at: $auth_dir"
   return 1
 }
 
@@ -280,8 +285,11 @@ TARGET=""
 SOCKET=""
 
 if [[ "$MODE_PICK" == "Local files on this Mac" ]]; then
-  ROOT="$(choose_folder)" || exit 0
-  ROOT="${ROOT%/}"
+  # Local MRI and CT inputs are selected inside the browser through the
+  # dedicated Load MRI and Load CT controls. A startup folder chooser adds
+  # friction without limiting those browser-selected files. HOME remains the
+  # local server safety boundary for any explicit local filesystem API calls.
+  ROOT="$HOME"
 else
   MODE="remote"
   LABEL="Remote workstation"

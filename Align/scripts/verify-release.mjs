@@ -16,8 +16,16 @@ const mustNotContain = (p, text, label) => { if (read(p).includes(text)) failure
 const runtime = path.join(app, 'Contents', 'Resources', 'runtime')
 const launcher = path.join(app, 'Contents', 'MacOS', 'brainana-align-launcher')
 const plist = path.join(app, 'Contents', 'Info.plist')
-const docsVersion = path.join(appPkg, 'Documentation', 'VERSION.json')
+const docsDir = path.join(appPkg, 'Documentation')
+const docsVersion = path.join(docsDir, 'VERSION.json')
+const requiredDocs = ['README.md','BUILD.md','CHANGELOG.md','ARCHITECTURE.md','FEATURE_PARITY.md','VALIDATION.md','TECHNICAL_FINDINGS.md','VERSION.json']
 for (const p of [app, runtime, path.join(runtime, 'platformCore.mjs'), path.join(runtime, 'sftpClient.mjs'), launcher, plist, docsVersion]) if (!fs.existsSync(p)) failures.push(`Missing ${p}`)
+for (const name of requiredDocs) if (!fs.existsSync(path.join(docsDir, name))) failures.push(`Missing Documentation/${name}`)
+if (fs.existsSync(docsDir)) {
+  const versionedDocs = fs.readdirSync(docsDir).filter(name => /^(ARCHITECTURE|CHANGELOG|VALIDATION)-.+\.md$/i.test(name))
+  if (versionedDocs.length) failures.push(`Version-stamped documentation present: ${versionedDocs.join(', ')}`)
+}
+if (fs.existsSync(path.join(appPkg, 'Documentation-release'))) failures.push('Duplicate Documentation-release directory present')
 if (!failures.length) {
   mustContain(path.join(runtime, 'version.mjs'), JSON.stringify(meta.version), 'runtime version.mjs')
   mustContain(path.join(runtime, 'version.mjs'), JSON.stringify(meta.buildId), 'runtime version.mjs')

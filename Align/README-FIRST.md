@@ -1,5 +1,7 @@
-# Brainana Align 0.16.22-lifecycle.7
+# Brainana Align 0.16.26-docs.1
 
-This release fixes the verified `rc: unbound variable` failure that stopped the remote saved-profile workflow before Terminal could open. It includes the complete self-contained macOS app, readable source, documentation, manifests, checksums, and both bundled macOS runtimes. No external Node, npm, Python, Homebrew, NVM, or Conda installation is required.
+This release simplifies the project documentation without changing application behavior. Release history now lives in one running `Documentation/CHANGELOG.md`. Architecture and validation are maintained as current-state documents rather than duplicated for every version.
 
-Start with the macOS app package. See `Documentation/VALIDATION-0.16.22-lifecycle.7.md` for validation details and the remaining real-Mac smoke test.
+The release includes the self-contained macOS app, complete shared source, consolidated documentation, version metadata, manifests, checksums, and both bundled macOS Node runtimes. No external Node, npm, Python, Homebrew, NVM, or Conda installation is required to run the app.
+
+Start with `Documentation/README.md`. Current validation status is in `Documentation/VALIDATION.md`.

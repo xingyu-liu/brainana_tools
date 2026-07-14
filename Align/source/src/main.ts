@@ -26,7 +26,7 @@ const planeTypes: Record<Plane, SLICE_TYPE> = {
 const app = document.querySelector<HTMLDivElement>('#app')!
 app.innerHTML = `
 <header class="topbar">
-  <div class="brand">Brainana Align <span>v0.16.22-lifecycle.7</span></div>
+  <div class="brand">Brainana Align <span>v0.16.26-docs.1</span></div>
   <div class="workflow-group image-loads">
     <label class="load compact-load" title="Load an MRI volume"><input id="mri-file" type="file" multiple accept=".nii,.nii.gz,.hdr,.img,.img.gz,.head,.brik,.brik.gz,.mgh,.mgz,.nrrd,.nhdr,.mif,.mha,.mhd,.raw,.v,.v16,.vmr,.npy,.npz,.fib,.src,.gz,application/gzip,application/x-gzip,application/octet-stream"><strong id="mri-name">Load MRI</strong></label>
     <label class="load compact-load" title="Load a CT volume"><input id="ct-file" type="file" multiple accept=".nii,.nii.gz,.hdr,.img,.img.gz,.head,.brik,.brik.gz,.mgh,.mgz,.nrrd,.nhdr,.mif,.mha,.mhd,.raw,.v,.v16,.vmr,.npy,.npz,.fib,.src,.gz,application/gzip,application/x-gzip,application/octet-stream"><strong id="ct-name">Load CT</strong></label>

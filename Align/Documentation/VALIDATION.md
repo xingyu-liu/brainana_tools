@@ -1,34 +1,36 @@
-# Validation report: 0.16.6-testing.1
+# Validation status
 
-## Completed
+## Current release: 0.16.26-docs.1
 
-- Clean dependency installation from `package-lock.json`
-- TypeScript compilation
-- Vite production build
-- Single-source release identity check
-- Source architecture checks
-- Coordinate, crosshair, and landmark checks
-- Optimization-window optional-plane checks
-- Session migration and export-artifact checks
-- Runtime integration module checks
-- Deterministic scientific rigid-transform reference tests
-- Local server startup, port publication, and health check
-- Headless Chromium UI regression test using the packaged frontend build
-- macOS launcher shell syntax check
-- Server syntax check
-- Exact source-build to packaged-frontend comparison
-- Apple Silicon and Intel bundled Node Mach-O checks
-- Executable permission checks
-- ZIP integrity checks
+This release changes documentation organization and release validation only. Application source and runtime behavior are unchanged from 0.16.25-local-start.1.
 
-## Browser-test coverage
+Completed checks:
 
-The browser suite confirms initial MRI and CT placeholders, the default status message, the default optimization summary, all six window interaction layers, activation for MRI plus CT, activation for MRI only, and deactivation after finishing definition.
+- TypeScript and Vite production build
+- release identity consistency
+- documentation-layout enforcement
+- source architecture checks
+- coordinate, crosshair, landmark, and optimization-window tests
+- scientific transform regression tests
+- session and export tests
+- server smoke, security, storage, and local-export tests
+- platform path and SFTP transport tests
+- browser UI and compatibility tests
+- Chromium production-bundle engine test in the available environment
+- launch-handshake and detached-lifecycle stress tests
+- macOS runtime-selection, launchd, SSH cancellation, Terminal-helper, and Local-mode startup tests
+- packaged frontend hash comparison
+- bundled runtime and launcher verification
+- ZIP integrity, release manifest, documentation inventory, and checksum validation
 
-## Scientific-test coverage
+## Browser certification boundary
 
-The scientific suite confirms deterministic rigid-transform recovery, inverse consistency, point round trips, per-plane optimization constraints, intersection of defined planes, and unrestricted behavior when no plane is defined.
+The repository requires Chromium, Firefox, and WebKit automation in CI. In the current build environment, only Chromium was available for execution. Firefox, WebKit, native Safari, and native Edge are not claimed as certified until their required tests run successfully. Native Safari remains necessary because WebKit automation does not fully test Safari-specific WebGL, graphics-driver, privacy, and file-dialog behavior.
 
-## Remaining real-machine tests
+## Native system boundary
 
-Interactive NiiVue WebGL rendering, real MRI/CT file loading, landmark dragging, zoom/pan marker projection, session export, and institutional SSH/Duo workflows still require testing on a real Mac with representative data.
+Finder launch, Dock behavior, Terminal LaunchServices behavior, interactive institutional SSH authentication, sleep/wake, and real network interruption require validation on actual macOS hardware. The current remote authentication flow has been confirmed by the user on macOS after the SSH correction. Linux and Windows remain architectural foundations rather than deployable packages.
+
+## Historical validation policy
+
+Major changes to validation are summarized in `CHANGELOG.md`. Detailed historical snapshots remain available in prior release archives and version-control history rather than duplicated inside every new source package.
