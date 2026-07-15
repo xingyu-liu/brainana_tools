@@ -1,37 +1,31 @@
 #!/bin/bash
-set -u
+set -euo pipefail
 
-BUNDLE_ID="org.brainana.viewerlauncher.localremote"
-APP_VERSION="2.1.1"
-BUILD_ID="2026-07-13-modal-stacking-1"
+APP_VERSION="2.4.0"
+BUILD_ID="2026-07-14-portability-browser-hardening-1"
+BUNDLE_ID="org.brainana.viewerlauncher"
+APP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME="$APP_ROOT/Resources/viewer"
 APP_SUPPORT="$HOME/Library/Application Support/Brainana Viewer Launcher"
-PROFILES_FILE="$APP_SUPPORT/remote-data-connections.tsv"
+CACHE_ROOT="$HOME/Library/Caches/Brainana Viewer/$APP_VERSION"
+INSTANCE_DIR="$APP_SUPPORT/instance"
+ACTIVE_INSTANCE="$INSTANCE_DIR/active.json"
+PROFILES_JSON="$APP_SUPPORT/connections.json"
+LEGACY_PROFILES_FILE="$APP_SUPPORT/remote-data-connections.tsv"
+LOG_DIR="$APP_SUPPORT/logs"
+/bin/mkdir -p "$APP_SUPPORT" "$CACHE_ROOT" "$INSTANCE_DIR" "$LOG_DIR"
+LOG_FILE="$LOG_DIR/launch-$(/bin/date +%Y%m%d-%H%M%S)-$$.log"
+exec > >(/usr/bin/tee -a "$LOG_FILE") 2>&1
 
-show_message() {
-  /usr/bin/osascript -e 'on run argv' \
-    -e 'display dialog (item 1 of argv) buttons {"OK"} default button "OK"' \
-    -e 'end run' -- "$1" >/dev/null
-}
-notify() {
-  /usr/bin/osascript -e 'on run argv' \
-    -e 'display notification (item 1 of argv) with title "Brainana Viewer Launcher"' \
-    -e 'end run' -- "$1" >/dev/null 2>&1 || true
-}
-ask_text() {
-  /usr/bin/osascript -e 'on run argv' \
-    -e 'display dialog (item 1 of argv) default answer (item 2 of argv) buttons {"Cancel", "Continue"} default button "Continue"' \
-    -e 'text returned of result' -e 'end run' -- "$1" "$2"
-}
-ask_yes_no() {
-  /usr/bin/osascript -e 'on run argv' \
-    -e 'display dialog (item 1 of argv) buttons {"No", "Yes"} default button "Yes"' \
-    -e 'button returned of result' -e 'end run' -- "$1"
-}
-choose_mode() {
-  /usr/bin/osascript -e 'set choices to {"Remote workstation", "Local Mac data"}' \
-    -e 'set picked to choose from list choices with title "Brainana Viewer Launcher" with prompt "Where are the Brainana data located?" default items {"Remote workstation"} OK button name "Continue" cancel button name "Cancel"' \
-    -e 'if picked is false then error number -128' -e 'item 1 of picked'
-}
+show_error() { show_message "$1" || true; }
+on_error() { local rc=$?; local line="$1"; show_error "The launcher stopped unexpectedly at line $line (error $rc). See $LOG_FILE"; exit "$rc"; }
+trap 'on_error $LINENO' ERR
+
+show_message() { /usr/bin/osascript -e 'on run a' -e 'display dialog (item 1 of a) with title "Brainana Viewer" buttons {"OK"} default button "OK"' -e 'end run' -- "$1" >/dev/null; }
+ask_text() { /usr/bin/osascript -e 'on run a' -e 'text returned of (display dialog (item 1 of a) default answer (item 2 of a) with title "Brainana Viewer" buttons {"Cancel", "Continue"} default button "Continue")' -e 'end run' -- "$1" "$2"; }
+ask_yes_no() { /usr/bin/osascript -e 'on run a' -e 'button returned of (display dialog (item 1 of a) with title "Brainana Viewer" buttons {"No", "Yes"} default button "Yes")' -e 'end run' -- "$1"; }
+choose_mode() { /usr/bin/osascript -e 'set p to choose from list {"Remote workstation", "Local Mac data"} with title "Brainana Viewer" with prompt "Where are the Brainana data located?" default items {"Remote workstation"}' -e 'if p is false then error number -128' -e 'item 1 of p'; }
+choose_folder() { /usr/bin/osascript -e 'on run a' -e 'POSIX path of (choose folder with prompt (item 1 of a))' -e 'end run' -- "$1"; }
 choose_from_lines() {
   local title="$1" prompt="$2" default_item="$3"; shift 3
   /usr/bin/osascript - "$title" "$prompt" "$default_item" "$@" <<'APPLESCRIPT'
@@ -48,215 +42,117 @@ on run argv
 end run
 APPLESCRIPT
 }
-choose_folder() {
-  local prompt="$1" default_path="$2"
-  if [[ -d "$default_path" ]]; then
-    /usr/bin/osascript -e 'on run argv' -e 'set f to choose folder with prompt (item 1 of argv) default location (POSIX file (item 2 of argv))' -e 'POSIX path of f' -e 'end run' -- "$prompt" "$default_path"
-  else
-    /usr/bin/osascript -e 'on run argv' -e 'set f to choose folder with prompt (item 1 of argv)' -e 'POSIX path of f' -e 'end run' -- "$prompt"
-  fi
-}
 read_default() { local v; v="$(/usr/bin/defaults read "$BUNDLE_ID" "$1" 2>/dev/null || true)"; [[ -n "$v" ]] && printf '%s' "$v" || printf '%s' "$2"; }
 save_default() { /usr/bin/defaults write "$BUNDLE_ID" "$1" "$2" >/dev/null 2>&1 || true; }
-normalize_port() {
-  local value="${1:-}" fallback="${2:-5173}"
-  if [[ "$value" =~ ^[0-9]+$ ]] && ((value >= 1024 && value <= 65435)); then
-    printf '%s' "$value"
-  else
-    printf '%s' "$fallback"
-  fi
+
+bundled_node() {
+  local arch node
+  arch="$(/usr/bin/uname -m)"
+  case "$arch" in arm64) node="$APP_ROOT/Resources/node/darwin-arm64/node" ;; x86_64) node="$APP_ROOT/Resources/node/darwin-x64/node" ;; *) return 1 ;; esac
+  [[ -x "$node" ]] || return 1
+  printf '%s\n' "$node"
 }
-port_is_free() {
-  local port="$1"
-  if [[ -x /usr/bin/nc ]]; then
-    ! /usr/bin/nc -z -w 1 127.0.0.1 "$port" >/dev/null 2>&1
-    return
-  fi
-  if [[ -x /usr/sbin/lsof ]]; then
-    ! /usr/sbin/lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1
-    return
-  fi
-  return 0
+NODE_BIN="$(bundled_node || true)"
+[[ -n "$NODE_BIN" ]] || { show_message "This app does not contain a Node runtime for Mac architecture $(/usr/bin/uname -m)."; exit 33; }
+
+profile_store() { "$NODE_BIN" "$RUNTIME/scripts/profile-store.mjs" "$1" "$PROFILES_JSON" "$LEGACY_PROFILES_FILE" "${@:2}"; }
+ensure_profiles_file() { /bin/mkdir -p "$APP_SUPPORT"; profile_store init; }
+profile_names() { profile_store list; }
+load_profile() {
+  local env_file
+  env_file="$(/usr/bin/mktemp -t brainana-viewer-profile.XXXXXX)" || return 1
+  profile_store get-shell "$1" > "$env_file" || { /bin/rm -f "$env_file"; return 1; }
+  # shellcheck disable=SC1090
+  source "$env_file"; /bin/rm -f "$env_file"
 }
-find_free_port() {
-  local requested="${1:-}" fallback="${2:-5173}" p max
-  p="$(normalize_port "$requested" "$fallback")"
-  max=$((p + 200))
-  ((max > 65535)) && max=65535
-  while ((p <= max)); do
-    if port_is_free "$p"; then
-      printf '%s' "$p"
-      return 0
+save_profile() { profile_store upsert "$1" "$2" "$3" "$4" "$5" "${6:-0}"; }
+delete_profile() { profile_store delete "$1"; }
+
+json_field() {
+  local file="$1" field="$2"
+  "$NODE_BIN" -e 'const fs=require("fs");try{const j=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));const v=j[process.argv[2]];if(v!==undefined&&v!==null)process.stdout.write(String(v))}catch{}' "$file" "$field"
+}
+clear_instance() {
+  [[ -s "$ACTIVE_INSTANCE" ]] || return 0
+  local label socket target pid
+  label="$(json_field "$ACTIVE_INSTANCE" launchLabel)"; socket="$(json_field "$ACTIVE_INSTANCE" controlSocket)"; target="$(json_field "$ACTIVE_INSTANCE" sshTarget)"; pid="$(json_field "$ACTIVE_INSTANCE" pid)"
+  [[ -n "$label" ]] && /bin/launchctl remove "$label" >/dev/null 2>&1 || true
+  if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" >/dev/null 2>&1; then
+    local command_line
+    command_line="$(/bin/ps -p "$pid" -o command= 2>/dev/null || true)"
+    if [[ "$command_line" == *"Brainana Viewer Launcher.app/Contents/Resources/viewer/server.mjs"* || "$command_line" == *"/Resources/viewer/server.mjs"* ]]; then
+      kill "$pid" >/dev/null 2>&1 || true
     fi
-    p=$((p + 1))
+  fi
+  [[ -n "$socket" && -n "$target" ]] && /usr/bin/ssh -S "$socket" -O exit "$target" >/dev/null 2>&1 || true
+  [[ -n "$socket" ]] && /bin/rm -f "$socket"
+  /bin/rm -f "$ACTIVE_INSTANCE"
+}
+reopen_matching_local() {
+  local root="$1" pid port token version mode existing_root url
+  [[ -s "$ACTIVE_INSTANCE" ]] || return 1
+  pid="$(json_field "$ACTIVE_INSTANCE" pid)"; port="$(json_field "$ACTIVE_INSTANCE" port)"; token="$(json_field "$ACTIVE_INSTANCE" sessionToken)"; version="$(json_field "$ACTIVE_INSTANCE" version)"; mode="$(json_field "$ACTIVE_INSTANCE" mode)"; existing_root="$(json_field "$ACTIVE_INSTANCE" dataRoot)"
+  if [[ "$version" != "$APP_VERSION" || "$mode" != "local" || "$existing_root" != "$root" || ! "$pid" =~ ^[0-9]+$ || ! "$port" =~ ^[0-9]+$ ]] || ! kill -0 "$pid" 2>/dev/null; then clear_instance; return 1; fi
+  url="http://127.0.0.1:$port"
+  if /usr/bin/curl --noproxy '*' --connect-timeout 0.35 --max-time 1 -fsS "$url/api/health" -H "X-Brainana-Session: $token" >/dev/null 2>&1; then
+    /usr/bin/open "$url/#session=$token"
+    return 0
+  fi
+  clear_instance; return 1
+}
+
+open_interactive_ssh() {
+  local target="$1" socket="$2" auth_dir status_file pid_file helper started_file
+  auth_dir="$CACHE_ROOT/ssh-auth-$$-${RANDOM:-0}"; status_file="$auth_dir/status"; pid_file="$auth_dir/helper.pid"; helper="$auth_dir/run-ssh-auth.command"; started_file="$auth_dir/started"
+  /bin/rm -rf "$auth_dir"; /bin/mkdir -p "$auth_dir"; /bin/chmod 700 "$auth_dir"; /bin/rm -f "$socket"
+  cat > "$helper" <<HELPER
+#!/bin/bash
+set +e
+STATUS_FILE=$(printf %q "$status_file")
+PID_FILE=$(printf %q "$pid_file")
+STARTED_FILE=$(printf %q "$started_file")
+write_status() { local rc="\$1" tmp="\${STATUS_FILE}.tmp.\$\$"; [[ -e "\$STATUS_FILE" ]] || { printf '%s\\n' "\$rc" > "\$tmp" && /bin/mv -f "\$tmp" "\$STATUS_FILE"; }; }
+trap 'write_status 130; exit 130' HUP INT TERM
+trap 'rc=\$?; write_status "\$rc"' EXIT
+printf '%s\\n' "\$\$" > "\$PID_FILE"
+printf 'started\\n' > "\$STARTED_FILE"
+/usr/bin/ssh -M -S $(printf %q "$socket") -o ControlMaster=yes -o ControlPersist=600 -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -fN $(printf %q "$target")
+exit \$?
+HELPER
+  /bin/chmod 700 "$helper"
+  /usr/bin/open -a Terminal "$helper" >/dev/null 2>&1 || { /bin/rm -rf "$auth_dir"; show_message "Could not open Terminal for SSH authentication."; return 1; }
+  local i=0
+  while [[ $i -lt 1200 ]]; do
+    if /usr/bin/ssh -S "$socket" -O check "$target" >/dev/null 2>&1; then /bin/rm -rf "$auth_dir"; return 0; fi
+    if [[ -s "$status_file" ]]; then
+      local rc; rc="$(/bin/cat "$status_file" 2>/dev/null || echo 1)"
+      /bin/rm -rf "$auth_dir"
+      [[ "$rc" == "130" || "$rc" == "129" || "$rc" == "143" ]] && return 2
+      return 1
+    fi
+    /bin/sleep 0.25; i=$((i+1))
   done
   return 1
 }
-random_port() {
-  local value
-  value="$(/usr/bin/od -An -N4 -tu4 /dev/urandom | /usr/bin/tr -d ' ')"
-  printf '%s' $((20000 + (value % 40000)))
-}
-sanitize() { printf '%s' "$1" | tr '\t\r\n' '   '; }
-
-ensure_profiles_file() {
-  /bin/mkdir -p "$APP_SUPPORT"
-  if [[ ! -f "$PROFILES_FILE" ]]; then
-    : > "$PROFILES_FILE"
-    printf 'Penn workstation\tekim\t128.91.12.238\t/mnt/DataDrive3/swap/test_brainana/preproc/frosty/preprocessed\t5273\n' >> "$PROFILES_FILE"
-    printf 'Bigbox\tmsl1\tbigbox.med.harvard.edu\t/data/brainana/output\t5273\n' >> "$PROFILES_FILE"
-  fi
-  chmod 600 "$PROFILES_FILE"
-}
-profile_names() { awk -F '\t' 'NF>=5{print $1}' "$PROFILES_FILE"; }
-load_profile() {
-  local line; line="$(awk -F '\t' -v n="$1" '$1==n{print;exit}' "$PROFILES_FILE")"; [[ -n "$line" ]] || return 1
-  IFS=$'\t' read -r PROFILE_NAME USERNAME HOST OUTPUT_DIR PROFILE_PORT <<< "$line"
-}
-save_profile() {
-  local old="$1" name="$2" user="$3" host="$4" data="$5" port="$6" tmp
-  tmp="$(/usr/bin/mktemp -t brainana-viewer-profiles.XXXXXX)" || return 1
-  awk -F '\t' -v n="$old" '$1!=n' "$PROFILES_FILE" > "$tmp"
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(sanitize "$name")" "$(sanitize "$user")" "$(sanitize "$host")" "$(sanitize "$data")" "$(sanitize "$port")" >> "$tmp"
-  mv "$tmp" "$PROFILES_FILE"; chmod 600 "$PROFILES_FILE"
-}
-delete_profile() { local tmp; tmp="$(/usr/bin/mktemp -t brainana-viewer-profiles.XXXXXX)" || return 1; awk -F '\t' -v n="$1" '$1!=n' "$PROFILES_FILE" > "$tmp"; mv "$tmp" "$PROFILES_FILE"; chmod 600 "$PROFILES_FILE"; }
-
-bundled_node() {
-  local app_root="$1" arch node
-  arch="$(/usr/bin/uname -m)"
-  case "$arch" in
-    arm64) node="$app_root/Resources/node/darwin-arm64/node" ;;
-    x86_64) node="$app_root/Resources/node/darwin-x64/node" ;;
-    *) return 1 ;;
-  esac
-  [[ -x "$node" ]] || return 1
-  printf '%s
-' "$node"
-}
-
-
-if [[ "${1:-}" == "--terminal" ]]; then
-  CONFIG_FILE="${2:-}"; [[ -f "$CONFIG_FILE" ]] || { echo "Missing launcher configuration."; exit 1; }
-  # shellcheck disable=SC1090
-  source "$CONFIG_FILE"; rm -f "$CONFIG_FILE"
-  APP_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-  RUNTIME="$APP_ROOT/Resources/viewer"
-  NODE_BIN="$(bundled_node "$APP_ROOT" || true)"
-  [[ -n "$NODE_BIN" ]] || { echo "ERROR: This app does not contain a Node runtime for Mac architecture $(/usr/bin/uname -m)."; exit 33; }
-
-  cleanup() {
-    [[ -n "${LOCAL_SERVER_PID:-}" ]] && kill "$LOCAL_SERVER_PID" >/dev/null 2>&1 || true
-    if [[ -n "${CONTROL_SOCKET:-}" && -S "$CONTROL_SOCKET" ]]; then /usr/bin/ssh -S "$CONTROL_SOCKET" -O exit "${USERNAME}@${HOST}" >/dev/null 2>&1 || true; fi
-  }
-  trap cleanup EXIT INT TERM
-
-  if [[ "$MODE" == "local" ]]; then
-    echo "Brainana Viewer Launcher"
-    echo "========================"
-    echo "Version: $APP_VERSION"
-    echo "Build ID: $BUILD_ID"
-    echo "Launcher path: $0"
-    echo "Mode: Local Mac data"
-    echo "Local runtime: $RUNTIME"
-    echo "Viewer source: bundled locally"
-    echo "Data directory: $OUTPUT_DIR"
-    echo "Viewer: http://localhost:$VIEWER_PORT"
-    echo
-    "$NODE_BIN" "$RUNTIME/server.mjs" --port "$VIEWER_PORT" --output-dir "$OUTPUT_DIR" >"$APP_SUPPORT/local-viewer.log" 2>&1 &
-    LOCAL_SERVER_PID=$!
-    URL="http://localhost:$VIEWER_PORT"
-    for attempt in $(seq 1 120); do
-      if /usr/bin/curl -fsS --max-time 1 "$URL/api/config" >/dev/null 2>&1; then
-        /usr/bin/open "$URL"
-        wait "$LOCAL_SERVER_PID"
-        exit $?
-      fi
-      kill -0 "$LOCAL_SERVER_PID" >/dev/null 2>&1 || { echo "ERROR: Local Viewer stopped before becoming available."; exit 44; }
-      sleep 1
-    done
-    echo "ERROR: Local Viewer did not become available. See $APP_SUPPORT/local-viewer.log"
-    exit 45
-  fi
-
-  CONTROL_DIR="$HOME/.brainana-viewer/ssh"; mkdir -p "$CONTROL_DIR"
-  SAFE_NAME="$(printf '%s' "$PROFILE_NAME" | tr -cs 'A-Za-z0-9._-' '_')"
-  CONTROL_SOCKET="$CONTROL_DIR/${SAFE_NAME}-$$.sock"
-  CACHE_DIR="$HOME/Library/Caches/Brainana Viewer/$APP_VERSION/${SAFE_NAME}"
-
-  echo "Brainana Viewer Launcher"
-  echo "========================"
-  echo "Version: $APP_VERSION"
-  echo "Build ID: $BUILD_ID"
-  echo "Launcher path: $0"
-  echo "Connection: $PROFILE_NAME"
-  echo "Viewer source: bundled locally on this Mac"
-  echo "Remote data: ${USERNAME}@${HOST}:$OUTPUT_DIR"
-  echo "Local viewer: http://localhost:$VIEWER_PORT"
-  echo "Runtime model: local-only; no code is installed or executed on the workstation"
-  echo "Local cache: $CACHE_DIR"
-  echo
-  echo "You may be asked for your SSH password, key passphrase, host confirmation, or Duo approval."
-
-  /usr/bin/ssh -M -S "$CONTROL_SOCKET" -o ControlMaster=yes -o ControlPersist=600     -o ServerAliveInterval=30 -o ServerAliveCountMax=3     -fN "${USERNAME}@${HOST}" || exit $?
-
-  echo "Checking workstation data access..."
-  printf -v OUTPUT_Q '%q' "$OUTPUT_DIR"
-  /usr/bin/ssh -S "$CONTROL_SOCKET" -o BatchMode=yes "${USERNAME}@${HOST}"     "test -d $OUTPUT_Q && test -r $OUTPUT_Q" || {
-      echo "ERROR: The remote data directory does not exist or is not readable: $OUTPUT_DIR"
-      exit 22
-    }
-
-  echo "Starting local Viewer with SSH filesystem access..."
-  /bin/mkdir -p "$CACHE_DIR"
-  "$NODE_BIN" "$RUNTIME/server.mjs"     --port "$VIEWER_PORT"     --mode workstation     --ssh-target "${USERNAME}@${HOST}"     --ssh-control "$CONTROL_SOCKET"     --remote-root "$OUTPUT_DIR"     --cache-dir "$CACHE_DIR"     >"$APP_SUPPORT/local-viewer.log" 2>&1 &
-  LOCAL_SERVER_PID=$!
-
-  URL="http://localhost:$VIEWER_PORT"
-  for attempt in $(seq 1 180); do
-    HEALTH="$(/usr/bin/curl -fsS --max-time 2 "$URL/api/health" 2>/dev/null || true)"
-    if [[ "$HEALTH" == *'"version":"2.1.1"'* ]] && [[ "$HEALTH" == *'"mode":"workstation"'* ]]; then
-      echo "Local runtime check: passed"
-      /usr/bin/open "$URL"
-      wait "$LOCAL_SERVER_PID"
-      exit $?
-    fi
-    kill -0 "$LOCAL_SERVER_PID" >/dev/null 2>&1 || {
-      echo "ERROR: Local Viewer stopped before becoming available."
-      echo "See $APP_SUPPORT/local-viewer.log"
-      /usr/bin/tail -n 40 "$APP_SUPPORT/local-viewer.log" 2>/dev/null || true
-      exit 44
-    }
-    sleep 1
-  done
-  echo "ERROR: Viewer did not become available. See $APP_SUPPORT/local-viewer.log"
-  exit 45
-
-fi
 
 MODE_PICK="$(choose_mode)" || exit 0
-MODE="remote"; PROFILE_NAME=""; USERNAME=""; HOST=""; OUTPUT_DIR=""; REMOTE_PORT="5273"
-
-if [[ "$MODE_PICK" == "Remote workstation" ]]; then
+MODE="local"; PROFILE_NAME="This Mac"; USERNAME=""; HOST=""; OUTPUT_DIR=""; TARGET=""; CONTROL_SOCKET=""
+if [[ "$MODE_PICK" == "Local Mac data" ]]; then
+  OUTPUT_DIR="$(choose_folder "Choose the local Brainana data folder.")" || exit 0
+  OUTPUT_DIR="${OUTPUT_DIR%/}"
+  [[ -d "$OUTPUT_DIR" ]] || { show_message "The selected folder does not exist."; exit 1; }
+  if reopen_matching_local "$OUTPUT_DIR"; then exit 0; fi
+else
+  MODE="workstation"
   ensure_profiles_file
-  RANDOM_PORT="$(random_port)"
   SAVED_NAMES=(); while IFS= read -r n; do [[ -n "$n" ]] && SAVED_NAMES+=("$n"); done < <(profile_names)
   MENU=("${SAVED_NAMES[@]}" "Add a new connection..." "Delete a saved connection...")
   LAST="$(read_default lastRemoteProfile "${SAVED_NAMES[0]:-Penn workstation}")"
-  PICKED="$(choose_from_lines "Brainana Viewer Launcher" "Choose a saved remote connection:" "$LAST" "${MENU[@]}")" || exit 0
+  PICKED="$(choose_from_lines "Brainana Viewer" "Choose a saved remote connection:" "$LAST" "${MENU[@]}")" || exit 0
   if [[ "$PICKED" == "Delete a saved connection..." ]]; then
-    if ((${#SAVED_NAMES[@]} == 0)); then
-      show_message "There are no saved connections to delete."
-      exec "$0"
-    fi
+    ((${#SAVED_NAMES[@]})) || { show_message "There are no saved connections to delete."; exec "$0"; }
     TO_DELETE="$(choose_from_lines "Delete Connection" "Choose the connection to delete:" "${SAVED_NAMES[0]}" "${SAVED_NAMES[@]}")" || exit 0
-    if [[ "$(ask_yes_no "Delete the saved connection ‘${TO_DELETE}’?")" == "Yes" ]]; then
-      if delete_profile "$TO_DELETE"; then
-        show_message "Deleted the saved connection ‘${TO_DELETE}’."
-      else
-        show_message "The saved connection could not be deleted."
-      fi
-    fi
+    [[ "$(ask_yes_no "Delete the saved connection ‘${TO_DELETE}’?")" == "Yes" ]] && delete_profile "$TO_DELETE"
     exec "$0"
   fi
   ORIGINAL=""
@@ -265,7 +161,7 @@ if [[ "$MODE_PICK" == "Remote workstation" ]]; then
     USERNAME="$(ask_text "Remote workstation username:" "")" || exit 0
     HOST="$(ask_text "Workstation hostname or IP address:" "")" || exit 0
     OUTPUT_DIR="$(ask_text "Brainana data directory on the workstation:" "")" || exit 0
-    REMOTE_PORT="$(ask_text "Local Viewer port for this launch. A random candidate is provided; edit it for full control:" "$RANDOM_PORT")" || exit 0
+    PROFILE_PORT=0
   else
     load_profile "$PICKED" || { show_message "The selected connection could not be loaded."; exit 1; }
     ORIGINAL="$PROFILE_NAME"
@@ -273,39 +169,77 @@ if [[ "$MODE_PICK" == "Remote workstation" ]]; then
     USERNAME="$(ask_text "Remote workstation username:" "$USERNAME")" || exit 0
     HOST="$(ask_text "Workstation hostname or IP address:" "$HOST")" || exit 0
     OUTPUT_DIR="$(ask_text "Brainana data directory on the workstation:" "$OUTPUT_DIR")" || exit 0
-    REMOTE_PORT="$(ask_text "Local Viewer port for this launch. A random candidate is provided; edit it for full control:" "$RANDOM_PORT")" || exit 0
   fi
   [[ -n "$PROFILE_NAME" && -n "$USERNAME" && -n "$HOST" && -n "$OUTPUT_DIR" ]] || { show_message "Connection name, username, host, and data directory are required."; exit 1; }
-  [[ "$REMOTE_PORT" =~ ^[0-9]+$ ]] && ((REMOTE_PORT>=1024 && REMOTE_PORT<=65435)) || { show_message "The remote port must be between 1024 and 65435."; exit 1; }
-  if [[ "$(ask_yes_no "Save these settings as ‘${PROFILE_NAME}’?")" == "Yes" ]]; then save_profile "$ORIGINAL" "$PROFILE_NAME" "$USERNAME" "$HOST" "$OUTPUT_DIR" "$REMOTE_PORT" || exit 1; fi
+  [[ "$(ask_yes_no "Save these settings as ‘${PROFILE_NAME}’?")" == "Yes" ]] && save_profile "$ORIGINAL" "$PROFILE_NAME" "$USERNAME" "$HOST" "$OUTPUT_DIR" "${PROFILE_PORT:-0}"
   save_default lastRemoteProfile "$PROFILE_NAME"
-else
-  MODE="local"
-  DEFAULT_DIR="$(read_default localOutputDir "$HOME")"
-  OUTPUT_DIR="$(choose_folder "Choose the local Brainana data folder." "$DEFAULT_DIR")" || exit 0
-  OUTPUT_DIR="${OUTPUT_DIR%/}"; [[ -d "$OUTPUT_DIR" ]] || { show_message "The selected folder does not exist."; exit 1; }
-  save_default localOutputDir "$OUTPUT_DIR"
+  TARGET="$USERNAME@$HOST"
+  SAFE_NAME="$(printf '%s' "$PROFILE_NAME" | /usr/bin/tr -cs 'A-Za-z0-9._-' '_')"
+  CONTROL_DIR="$HOME/.brainana-viewer/ssh"; /bin/mkdir -p "$CONTROL_DIR"
+  CONTROL_SOCKET="$CONTROL_DIR/${SAFE_NAME}-$$.sock"
+  if ! open_interactive_ssh "$TARGET" "$CONTROL_SOCKET"; then rc=$?; [[ $rc -eq 2 ]] && exit 0; show_message "SSH authentication did not complete."; exit 1; fi
+  printf -v ROOT_Q '%q' "$OUTPUT_DIR"
+  /usr/bin/ssh -S "$CONTROL_SOCKET" -o BatchMode=yes "$TARGET" "test -d $ROOT_Q && test -r $ROOT_Q" || { /usr/bin/ssh -S "$CONTROL_SOCKET" -O exit "$TARGET" >/dev/null 2>&1 || true; show_message "The remote data directory does not exist or is not readable."; exit 22; }
+  clear_instance
 fi
 
-TUNNEL_PORT=""
-if [[ "$MODE" == "remote" ]]; then
-  VIEWER_PORT="$REMOTE_PORT"
-  if ! port_is_free "$VIEWER_PORT"; then
-    show_message "Local port ${VIEWER_PORT} is already in use. Relaunch and choose another port in the connection popup."
-    exit 1
+LAUNCH_ID="$(/usr/bin/uuidgen | /usr/bin/tr '[:upper:]' '[:lower:]')"
+LAUNCH_DIR="$CACHE_ROOT/launch-$LAUNCH_ID"; /bin/mkdir -p "$LAUNCH_DIR"
+HANDSHAKE_FILE="$LAUNCH_DIR/handshake.json"; ERROR_FILE="$LAUNCH_DIR/error.json"; SERVER_LOG="$LOG_DIR/server-$LAUNCH_ID.log"; WRAPPER="$LAUNCH_DIR/start-server.sh"
+LAUNCH_LABEL="org.brainana.viewer.${UID}.${LAUNCH_ID}"
+ARGS=(--host 127.0.0.1 --port 0 --handshake-file "$HANDSHAKE_FILE" --error-file "$ERROR_FILE")
+if [[ "$MODE" == "local" ]]; then ARGS+=(--output-dir "$OUTPUT_DIR"); else ARGS+=(--mode workstation --ssh-target "$TARGET" --ssh-control "$CONTROL_SOCKET" --remote-root "$OUTPUT_DIR" --cache-dir "$CACHE_ROOT/$SAFE_NAME"); fi
+{
+  printf '#!/bin/bash\nexec '
+  printf '%q ' "$NODE_BIN" "$RUNTIME/server.mjs" "${ARGS[@]}"
+  printf '>> %q 2>&1\n' "$SERVER_LOG"
+} > "$WRAPPER"; /bin/chmod 700 "$WRAPPER"
+SERVER_OWNERSHIP_TRANSFERRED=0
+PID=""
+cleanup_new_launch() {
+  if [[ "$SERVER_OWNERSHIP_TRANSFERRED" -ne 1 ]]; then
+    /bin/launchctl remove "$LAUNCH_LABEL" >/dev/null 2>&1 || true
+    [[ "$PID" =~ ^[0-9]+$ ]] && kill "$PID" >/dev/null 2>&1 || true
+    [[ -n "${CONTROL_SOCKET:-}" && -n "${TARGET:-}" ]] && /usr/bin/ssh -S "$CONTROL_SOCKET" -O exit "$TARGET" >/dev/null 2>&1 || true
   fi
-else
-  SAVED_VIEWER_PORT="$(read_default localViewerPort 5173)"
-  VIEWER_PORT="$(find_free_port "$SAVED_VIEWER_PORT" 5173)" || {
-    show_message "No free local Viewer port was found between 5173 and 5373. Close any old Brainana Viewer or Align Terminal sessions and try again."
-    exit 1
-  }
-  save_default localViewerPort "$VIEWER_PORT"
+  /bin/rm -rf "$LAUNCH_DIR"
+}
+trap cleanup_new_launch EXIT
+/bin/launchctl submit -l "$LAUNCH_LABEL" -- /bin/bash "$WRAPPER" || { show_message "Unable to start Brainana Viewer."; exit 1; }
+PORT=""; SESSION_TOKEN=""
+for _ in $(seq 1 300); do
+  if [[ -s "$HANDSHAKE_FILE" ]]; then
+    PORT="$(json_field "$HANDSHAKE_FILE" port)"; SESSION_TOKEN="$(json_field "$HANDSHAKE_FILE" sessionToken)"; PID="$(json_field "$HANDSHAKE_FILE" pid)"
+    if [[ "$PORT" =~ ^[0-9]+$ && "$PID" =~ ^[0-9]+$ && "$SESSION_TOKEN" =~ ^[0-9A-Fa-f]{64,}$ ]]; then break; fi
+    PORT=""; SESSION_TOKEN=""; PID=""
+  fi
+  [[ -s "$ERROR_FILE" ]] && break
+  /bin/launchctl print "gui/${UID}/${LAUNCH_LABEL}" >/dev/null 2>&1 || break
+  /bin/sleep 0.1
+done
+if [[ ! "$PORT" =~ ^[0-9]+$ || ! "$PID" =~ ^[0-9]+$ || ! "$SESSION_TOKEN" =~ ^[0-9A-Fa-f]{64,}$ ]]; then
+  SERVER_ERROR="$(/bin/cat "$ERROR_FILE" 2>/dev/null || true)"
+  show_message "Brainana Viewer did not start. ${SERVER_ERROR:-See $SERVER_LOG for details.}"
+  exit 1
 fi
-
-CONFIG="$(/usr/bin/mktemp -t brainana-viewer-launcher.XXXXXX)" || exit 1
-chmod 600 "$CONFIG"
-for var in MODE PROFILE_NAME USERNAME HOST OUTPUT_DIR REMOTE_PORT VIEWER_PORT TUNNEL_PORT APP_VERSION BUILD_ID; do printf '%s=%q\n' "$var" "${!var}" >> "$CONFIG"; done
-printf -v SELF_Q '%q' "$0"; printf -v CONFIG_Q '%q' "$CONFIG"; TERMINAL_CMD="$SELF_Q --terminal $CONFIG_Q"
-/usr/bin/osascript -e 'on run argv' -e 'tell application "Terminal"' -e 'activate' -e 'do script (item 1 of argv)' -e 'end tell' -e 'end run' -- "$TERMINAL_CMD" >/dev/null
+BASE_URL="http://127.0.0.1:$PORT"
+READY=0
+for _ in $(seq 1 80); do
+  if /usr/bin/curl --noproxy '*' --connect-timeout 0.25 --max-time 0.75 -fsS "$BASE_URL/api/health" -H "X-Brainana-Session: $SESSION_TOKEN" >/dev/null 2>&1; then READY=1; break; fi
+  /bin/sleep 0.1
+done
+[[ $READY -eq 1 ]] || { show_message "Brainana Viewer failed its startup health check. See $SERVER_LOG"; exit 1; }
+export ACTIVE_INSTANCE APP_VERSION BUILD_ID PID PORT SESSION_TOKEN MODE PROFILE_NAME OUTPUT_DIR CONTROL_SOCKET TARGET SERVER_LOG LAUNCH_LABEL
+"$NODE_BIN" -e 'const fs=require("fs");const p=process.env.ACTIVE_INSTANCE,t=p+".tmp."+process.pid;const j={schemaVersion:2,version:process.env.APP_VERSION,buildId:process.env.BUILD_ID,pid:Number(process.env.PID),port:Number(process.env.PORT),sessionToken:process.env.SESSION_TOKEN,mode:process.env.MODE,profile:process.env.PROFILE_NAME,dataRoot:process.env.OUTPUT_DIR,controlSocket:process.env.CONTROL_SOCKET,sshTarget:process.env.TARGET,serverLog:process.env.SERVER_LOG,launchLabel:process.env.LAUNCH_LABEL};fs.mkdirSync(require("path").dirname(p),{recursive:true});fs.writeFileSync(t,JSON.stringify(j,null,2)+"\n",{mode:0o600});fs.renameSync(t,p)' || exit 1
+SERVER_OWNERSHIP_TRANSFERRED=1
+trap - EXIT
+echo "Brainana Viewer $APP_VERSION ($BUILD_ID)"
+echo "Mode: $MODE"
+echo "Profile: $PROFILE_NAME"
+echo "Browser URL: $BASE_URL (session token omitted from log)"
+echo "Server PID: $PID"
+echo "Server log: $SERVER_LOG"
+echo "Launch log: $LOG_FILE"
+/usr/bin/open "$BASE_URL/#session=$SESSION_TOKEN" >/dev/null 2>&1 &
+/bin/rm -rf "$LAUNCH_DIR"
 exit 0

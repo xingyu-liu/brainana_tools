@@ -1,6 +1,7 @@
 {
   "app": "Brainana Viewer",
-  "version": "2.1.1",
-  "buildId": "2026-07-13-modal-stacking-1",
-  "architecture": "local-only-ssh"
+  "version": "2.4.0",
+  "buildId": "2026-07-14-portability-browser-hardening-1",
+  "architecture": "local-only-ssh-detached",
+  "settingsSchemaVersion": 1
 }

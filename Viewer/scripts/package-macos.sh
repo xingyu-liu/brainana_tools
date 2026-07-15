@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="2.1.1"
+VERSION="2.4.0"
 DEST="${1:-$ROOT/release}"
 APP="$DEST/Brainana Viewer Launcher.app"
 NODE_ARM_PACKAGE="$ROOT/vendor/node-packages/node-bin-darwin-arm64-22.11.0.tgz"
@@ -23,7 +23,9 @@ rm -rf "$APP"
 mkdir -p "$DEST" "$APP/Contents/MacOS" "$APP/Contents/Resources/viewer" "$APP/Contents/Resources/node/darwin-arm64" "$APP/Contents/Resources/node/darwin-x64" "$APP/Contents/Resources/licenses"
 cp "$ROOT/launcher/brainana-launcher" "$APP/Contents/MacOS/brainana-launcher"
 chmod +x "$APP/Contents/MacOS/brainana-launcher"
-cp "$ROOT/server.mjs" "$ROOT/remote-filesystem.mjs" "$ROOT/VERSION.json" "$APP/Contents/Resources/viewer/"
+cp "$ROOT/server.mjs" "$ROOT/remote-filesystem.mjs" "$ROOT/filesystem-adapter.mjs" "$ROOT/VERSION.json" "$APP/Contents/Resources/viewer/"
+mkdir -p "$APP/Contents/Resources/viewer/scripts"
+cp "$ROOT/scripts/profile-store.mjs" "$APP/Contents/Resources/viewer/scripts/"
 cp -R "$ROOT/dist" "$APP/Contents/Resources/viewer/dist"
 extract_node "$NODE_ARM_PACKAGE" "$APP/Contents/Resources/node/darwin-arm64/node"
 extract_node "$NODE_X64_PACKAGE" "$APP/Contents/Resources/node/darwin-x64/node"
@@ -40,7 +42,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <key>CFBundleName</key><string>Brainana Viewer Launcher</string>
 <key>CFBundlePackageType</key><string>APPL</string>
 <key>CFBundleShortVersionString</key><string>$VERSION</string>
-<key>CFBundleVersion</key><string>20101</string>
+<key>CFBundleVersion</key><string>20400</string>
 <key>LSMinimumSystemVersion</key><string>12.0</string>
 </dict></plist>
 PLIST

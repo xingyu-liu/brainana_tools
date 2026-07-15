@@ -1,22 +1,41 @@
 {
   "name": "brainana-viewer",
   "private": true,
-  "version": "2.1.1",
+  "version": "2.4.0",
   "type": "module",
   "scripts": {
     "dev": "node server.mjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "start": "node server.mjs",
-    "test": "node scripts/run-tests.mjs"
+    "test": "node scripts/run-tests.mjs",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "test:profiles": "node tests/profile_store_test.mjs",
+    "lint": "eslint .",
+    "format": "prettier --write \"scripts/**/*.{mjs,js}\" \"tests/**/*.{mjs,js}\" \"*.{json,mjs,js}\" \"Documentation/**/*.md\"",
+    "format:check": "prettier --check \"scripts/**/*.{mjs,js}\" \"tests/**/*.{mjs,js}\" \"*.{json,mjs,js}\" \"Documentation/**/*.md\"",
+    "validate": "node scripts/validate.mjs",
+    "package:check": "node scripts/check-release.mjs",
+    "package:macos": "bash scripts/package-macos.sh",
+    "test:transforms": "node scripts/run-transform-test.mjs",
+    "test:filesystem": "node tests/filesystem_adapter_contract_test.mjs",
+    "test:lifecycle": "node tests/application_lifecycle_test.mjs",
+    "ci:validate": "BRAINANA_BROWSER_SMOKE=1 node scripts/validate.mjs"
   },
   "devDependencies": {
-    "typescript": "~6.0.2",
-    "vite": "^8.1.1"
+    "@eslint/js": "10.0.1",
+    "eslint": "10.7.0",
+    "globals": "17.7.0",
+    "prettier": "3.9.5",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.64.0",
+    "vite": "8.1.4",
+    "playwright-core": "1.61.1",
+    "tsx": "4.23.1"
   },
   "dependencies": {
-    "@niivue/niivue": "^0.69.0",
-    "fflate": "^0.8.2",
-    "nifti-reader-js": "^0.8.0"
+    "@niivue/niivue": "0.69.0",
+    "fflate": "0.8.3",
+    "nifti-reader-js": "0.8.0"
   }
 }
