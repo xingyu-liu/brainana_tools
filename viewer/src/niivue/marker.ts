@@ -7,9 +7,13 @@ import { Niivue, NVMesh } from '@niivue/niivue'
 
 const MARKER_NAME = 'selected-location'
 const MARKER_RGBA = new Uint8Array([255, 196, 0, 255]) // amber, matches v1.2.25
-// ~0.5× the old footprint (was a 1.35 sphere), but taller along the normal so it reads as a pin.
-const R_RADIAL = 0.6 // half-width across the surface
-const R_HEIGHT = 1.25 // half-length along the surface normal (taller)
+// A small pin, slightly elongated along the surface normal so it reads as a marker.
+const R_RADIAL = 0.55 // half-width across the surface
+const R_HEIGHT = 0.9 // half-length along the surface normal
+// How far the centre is pushed out along the normal. Kept small so the marker sits essentially
+// ON the picked vertex — a large lift makes the marker project away from the cursor while
+// dragging (the drag-offset bug). Just enough that it isn't fully buried.
+const LIFT = 0.3
 
 function uvSphere(stacks: number, slices: number): { pts: Float32Array; tris: Uint32Array } {
   const pts: number[] = []
@@ -89,10 +93,10 @@ export class Marker {
       return
     }
     const n = normalize(normal ?? [0, 1, 0])
-    // Lift the centre out by one half-length so the pin's inner tip meets the surface.
-    const cx = xyz[0] + n[0] * R_HEIGHT
-    const cy = xyz[1] + n[1] * R_HEIGHT
-    const cz = xyz[2] + n[2] * R_HEIGHT
+    // Small outward lift so the pin sits on the surface without projecting away from the cursor.
+    const cx = xyz[0] + n[0] * LIFT
+    const cy = xyz[1] + n[1] * LIFT
+    const cz = xyz[2] + n[2] * LIFT
     const src = this.#base.pts
     const pts = new Float32Array(src.length)
     for (let i = 0; i < src.length; i += 3) {

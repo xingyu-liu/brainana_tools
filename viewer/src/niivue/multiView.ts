@@ -30,6 +30,23 @@ export interface SurfaceOverlay {
   table: LabelColortable
 }
 
+export type MorphologyMetric = 'curvature' | 'sulc' | 'thickness'
+export type MorphologyDisplayMetric = MorphologyMetric | 'none'
+export type CurvatureStyle = 'binary' | 'continuous'
+
+// The three per-hemisphere morphology shading sources (.shape.gii pairs). Any may be absent.
+export interface MorphologyShapePairs {
+  curvature?: SurfacePairUrls
+  sulc?: SurfacePairUrls
+  thickness?: SurfacePairUrls
+}
+
+export interface MorphologyDisplay {
+  metric: MorphologyDisplayMetric
+  curvatureStyle: CurvatureStyle
+  ranges: Record<MorphologyMetric, { min: number; max: number }>
+}
+
 export interface CrosshairInfo {
   mm: [number, number, number]
 }
@@ -141,6 +158,118 @@ export class MultiView {
     }
   }
 
+  // ---- functional overlay (retinotopy/somatotopy 4D volume with F-threshold masking) ----
+  #funcVol: NVImage | null = null
+  #funcMeta: { frameSize: number; frames: number; slope: number; inter: number; originals: Map<number, Float32Array> } | null = null
+  #funcSampler: NVImage | null = null // unmasked copy for the report + visual field
+
+  async loadFunctional(url: string, colormap: string, opacity: number): Promise<number> {
+    if (this.#funcVol) this.slices.removeVolume(this.#funcVol)
+    const vol = await this.slices.addVolumeFromUrl({ url: this.#client.dataUrl(url), colormap, opacity })
+    vol.trustCalMinMax = false
+    this.#funcVol = vol
+    const dims = vol.hdr?.dims ?? []
+    const frameSize = (dims[1] || 1) * (dims[2] || 1) * (dims[3] || 1)
+    const frames = dims[4] && dims[4] > 1 ? dims[4] : 1
+    const slope = vol.hdr?.scl_slope && vol.hdr.scl_slope !== 0 ? vol.hdr.scl_slope : 1
+    const inter = vol.hdr?.scl_inter ?? 0
+    this.#funcMeta = { frameSize, frames, slope, inter, originals: new Map() }
+    // A separate unmasked copy for crosshair sampling (report / visual field).
+    this.#funcSampler = await NVImage.loadFromUrl({ url: this.#client.dataUrl(url) })
+    return frames
+  }
+
+  removeFunctional(): void {
+    if (this.#funcVol) this.slices.removeVolume(this.#funcVol)
+    this.#funcVol = null
+    this.#funcMeta = null
+    this.#funcSampler = null
+  }
+
+  setFunctionalOpacity(opacity: number): void {
+    if (this.#funcVol) this.slices.setOpacity(this.slices.getVolumeIndexByID(this.#funcVol.id), opacity)
+  }
+
+  // Scaled voxel values of one 4D frame (copy) — for computing the F-threshold slider bounds.
+  scaledFrame(frameIndex: number): Float32Array {
+    const meta = this.#funcMeta
+    if (!meta || !this.#funcVol?.img) return new Float32Array()
+    const { frameSize, slope, inter } = meta
+    const img = this.#funcVol.img
+    const start = frameIndex * frameSize
+    const out = new Float32Array(frameSize)
+    for (let i = 0; i < frameSize; i++) out[i] = img[start + i] * slope + inter
+    return out
+  }
+
+  // Display `valueFrame` masked by `fFrame` >= threshold. Failing voxels are set to a sentinel
+  // BELOW cal_min so they map to the transparent index-0 of the LUT (hidden, not colored-as-0).
+  applyFunctional(valueFrame: number, fFrame: number | null, threshold: number, colormap: string, opacity: number, calMin: number, calMax: number): void {
+    const meta = this.#funcMeta
+    const vol = this.#funcVol
+    if (!meta || !vol?.img) return
+    const { frameSize, slope, inter, originals } = meta
+    const img = vol.img
+    const sentinel = calMin - 1000 // guaranteed below cal_min → transparent
+    const vStart = valueFrame * frameSize
+    if (!originals.has(valueFrame)) originals.set(valueFrame, Float32Array.from(img.subarray(vStart, vStart + frameSize)))
+    const original = originals.get(valueFrame) as Float32Array
+    if (fFrame == null) {
+      img.set(original, vStart)
+    } else {
+      const fStart = fFrame * frameSize
+      for (let i = 0; i < frameSize; i++) {
+        const f = img[fStart + i] * slope + inter
+        img[vStart + i] = Number.isFinite(f) && f >= threshold ? original[i] : sentinel
+      }
+    }
+    this.slices.setColormap(vol.id, colormap)
+    vol.cal_min = calMin
+    vol.cal_max = calMax
+    this.slices.setFrame4D(vol.id, valueFrame)
+    const idx = this.slices.getVolumeIndexByID(vol.id)
+    if (idx >= 0) this.slices.setOpacity(idx, opacity)
+    this.slices.updateGLVolume()
+  }
+
+  // Crosshair voxel of the functional sampler (integer i,j,k) or null.
+  functionCrosshairVox(): [number, number, number] | null {
+    if (!this.#funcSampler) return null
+    try {
+      const mm = Array.from(this.slices.frac2mm(this.slices.scene.crosshairPos)) as number[]
+      const vox = this.#funcSampler.mm2vox([mm[0], mm[1], mm[2]]) as number[]
+      return [Math.round(vox[0]), Math.round(vox[1]), Math.round(vox[2])]
+    } catch {
+      return null
+    }
+  }
+
+  // Anatomical (base volume) voxel index i,j,k for a world-mm point, or null.
+  baseVox(mm: [number, number, number]): [number, number, number] | null {
+    if (!this.#baseVol) return null
+    try {
+      const v = this.#baseVol.mm2vox([mm[0], mm[1], mm[2]]) as number[]
+      return [Math.round(v[0]), Math.round(v[1]), Math.round(v[2])]
+    } catch {
+      return null
+    }
+  }
+
+  // Value of a functional frame at a voxel (unmasked sampler). NaN if unavailable.
+  sampleFunctionFrame(vox: [number, number, number], frame: number): number {
+    if (!this.#funcSampler) return NaN
+    try {
+      return this.#funcSampler.getValue(vox[0], vox[1], vox[2], frame)
+    } catch {
+      return NaN
+    }
+  }
+
+  functionDims(): [number, number, number] | null {
+    const d = this.#funcSampler?.hdr?.dims
+    return d ? [d[1], d[2], d[3]] : null
+  }
+
   // Sampling-only atlas volumes for the multi-level Anatomy report (loaded but NOT displayed).
   #reportVols = new Map<string, NVImage>()
 
@@ -196,6 +325,8 @@ export class MultiView {
       if (m.name !== 'selected-location') this.render.removeMesh(m) // keep the marker
     }
     this.#displayMeshes = []
+    this.#funcLayerIndex = -1 // function-surface layer is gone with the old meshes
+    this.#funcLayerKey = null
   }
 
   // Load the reference surface (typically pial) in WORLD space — used only to map the volume
@@ -211,34 +342,83 @@ export class MultiView {
 
   #atlasLayerIndex = -1
 
-  async #applyOverlayLut(table: LabelColortable): Promise<void> {
-    if (this.#atlasLayerIndex < 0) return
+  // Re-apply a label colortable to a layer AFTER load: NiiVue 0.69 drops the descriptor's
+  // colormapLabel (it is processed before layer.global_max settles, collapsing all labels to one
+  // colour). setLayerProperty re-runs makeLabelLut with the settled global_max, and requires the
+  // colormapLabel key to already exist on the layer (seeded via the load descriptor).
+  async #applyLabelLutAt(index: number, table: LabelColortable): Promise<void> {
+    if (index < 0) return
     const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
     for (const mesh of this.#displayMeshes) {
-      // setLayerProperty runs makeLabelLut with the now-settled layer.global_max, so pass the
-      // RAW table; it also requires the colormapLabel key to already exist on the layer (set
-      // via the load descriptor below).
-      await (mesh as unknown as { setLayerProperty: (i: number, k: string, v: unknown, gl: WebGL2RenderingContext) => Promise<void> }).setLayerProperty(this.#atlasLayerIndex, 'colormapLabel', table, gl).catch(() => {})
+      await (mesh as unknown as { setLayerProperty: (i: number, k: string, v: unknown, gl: WebGL2RenderingContext) => Promise<void> }).setLayerProperty(index, 'colormapLabel', table, gl).catch(() => {})
     }
+  }
+
+  async #applyOverlayLut(table: LabelColortable): Promise<void> {
+    if (this.#atlasLayerIndex < 0) return
+    await this.#applyLabelLutAt(this.#atlasLayerIndex, table)
     this.render.drawScene()
   }
 
   // Show a hemisphere-pair surface: binary curvature shading (layer 0) + an optional
   // precomputed atlas/function surface overlay (layer 1, colored by its label colortable).
-  async setSurface(pair: SurfacePairUrls | null, curvature: SurfacePairUrls | null, overlay: SurfaceOverlay | null = null): Promise<void> {
+  // ---- morphology shading (curvature binary/continuous · sulc · thickness) ----
+  // Four categorical/continuous mesh layers are loaded per hemisphere (v1.2.25 model): binary
+  // curvature (FreeSurfer sign LUT), continuous curvature (gray), sulc (blue2red), thickness
+  // (viridis). Switching the displayed metric only toggles layer opacities — no reload. The
+  // morphology layers occupy the LOW indices; the atlas overlay and function layer sit above.
+  #morphPairs: MorphologyShapePairs = {}
+  #morphDisplay: MorphologyDisplay | null = null
+  #morphIndex: Partial<Record<string, number>> = {} // layer key -> layer index (same on both hemis)
+
+  #morphSpecs(): Array<{ key: string; metric: MorphologyMetric; pair: SurfacePairUrls; colormap: string }> {
+    const specs: Array<{ key: string; metric: MorphologyMetric; pair: SurfacePairUrls; colormap: string }> = []
+    if (this.#morphPairs.curvature) {
+      specs.push({ key: 'curvatureBinary', metric: 'curvature', pair: this.#morphPairs.curvature, colormap: 'brainana_curvature' })
+      specs.push({ key: 'curvatureContinuous', metric: 'curvature', pair: this.#morphPairs.curvature, colormap: 'gray' })
+    }
+    if (this.#morphPairs.sulc) specs.push({ key: 'sulc', metric: 'sulc', pair: this.#morphPairs.sulc, colormap: 'blue2red' })
+    if (this.#morphPairs.thickness) specs.push({ key: 'thickness', metric: 'thickness', pair: this.#morphPairs.thickness, colormap: 'viridis' })
+    return specs
+  }
+
+  #morphLayerVisible(key: string): boolean {
+    const d = this.#morphDisplay
+    if (!d || d.metric === 'none') return false
+    if (key === 'curvatureBinary') return d.metric === 'curvature' && d.curvatureStyle === 'binary'
+    if (key === 'curvatureContinuous') return d.metric === 'curvature' && d.curvatureStyle === 'continuous'
+    return d.metric === key
+  }
+
+  // cal range for a morphology layer: binary curvature is forced to ±1; the rest come from the
+  // display's per-metric range.
+  #morphLayerCal(key: string, metric: MorphologyMetric): { min: number; max: number } {
+    if (key === 'curvatureBinary') return { min: -1, max: 1 }
+    const r = this.#morphDisplay?.ranges[metric]
+    return r ? { min: r.min, max: r.max } : { min: -1, max: 1 }
+  }
+
+  async setSurface(pair: SurfacePairUrls | null, morphology: MorphologyShapePairs | null, overlay: SurfaceOverlay | null = null, display: MorphologyDisplay | null = null): Promise<void> {
     this.#clearDisplayMeshes()
     if (!pair) return
+    this.#morphPairs = morphology ?? {}
+    this.#morphDisplay = display
+    this.#morphIndex = {}
     const u = (url: string) => this.#client.dataUrl(url)
+    const specs = this.#morphSpecs()
+    specs.forEach((s, i) => (this.#morphIndex[s.key] = i))
     const layersFor = (hemi: 'left' | 'right'): Record<string, unknown>[] => {
-      const arr: Record<string, unknown>[] = []
-      if (curvature) arr.push({ ...NVMeshLayerDefaults, url: u(curvature[hemi]), colormap: 'brainana_curvature', opacity: 1, cal_min: -0.5, cal_max: 0.5, showLegend: false })
+      const arr: Record<string, unknown>[] = specs.map((s) => {
+        const cal = this.#morphLayerCal(s.key, s.metric)
+        return { ...NVMeshLayerDefaults, url: u(s.pair[hemi]), colormap: s.colormap, opacity: this.#morphLayerVisible(s.key) ? 1 : 0, cal_min: cal.min, cal_max: cal.max, isTransparentBelowCalMin: false, colorbarVisible: false, showLegend: false }
+      })
       if (overlay) arr.push({ ...NVMeshLayerDefaults, url: u(overlay[hemi]), colormapLabel: overlay.table, opacity: 1, showLegend: false })
       return arr
     }
-    this.#atlasLayerIndex = overlay ? (curvature ? 1 : 0) : -1
+    this.#atlasLayerIndex = overlay ? specs.length : -1
     await this.render.loadMeshes([
-      { url: u(pair.left), layers: layersFor('left') as never },
-      { url: u(pair.right), layers: layersFor('right') as never },
+      { url: u(pair.left), rgba255: [172, 172, 172, 255], layers: layersFor('left') as never },
+      { url: u(pair.right), rgba255: [172, 172, 172, 255], layers: layersFor('right') as never },
     ])
     // Identify the two just-loaded hemisphere meshes (exclude the marker).
     this.#displayMeshes = (this.render.meshes as NVMesh[]).filter((m) => m.name !== 'selected-location').slice(-2)
@@ -248,9 +428,61 @@ export class MultiView {
     if (overlay) await this.#applyOverlayLut(overlay.table)
   }
 
+  // Live-switch the morphology shading: toggle layer opacities (only the active metric/style is
+  // visible) and update cal ranges. No mesh reload.
+  applyMorphologyDisplay(display: MorphologyDisplay): void {
+    this.#morphDisplay = display
+    if (this.#displayMeshes.length < 2) return
+    const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
+    for (const spec of this.#morphSpecs()) {
+      const idx = this.#morphIndex[spec.key]
+      if (idx == null) continue
+      const cal = this.#morphLayerCal(spec.key, spec.metric)
+      const visible = this.#morphLayerVisible(spec.key)
+      for (const mesh of this.#displayMeshes) {
+        const layer = (mesh as unknown as { layers?: Array<Record<string, unknown>> }).layers?.[idx]
+        if (!layer) continue
+        layer.opacity = visible ? 1 : 0
+        layer.cal_min = cal.min
+        layer.cal_max = cal.max
+        ;(mesh as unknown as { updateMesh?: (gl: WebGL2RenderingContext) => void }).updateMesh?.(gl)
+      }
+    }
+    this.render.drawScene()
+  }
+
   // Update the atlas surface layer's colortable in place (ROI toggle) — no mesh reload.
   async updateSurfaceOverlayTable(table: LabelColortable): Promise<void> {
     await this.#applyOverlayLut(table)
+  }
+
+  // Swap the atlas/function overlay layer WITHOUT reloading the base surface meshes, so the
+  // surface never blanks when the overlay changes (Req 7). Removes the current overlay layer in
+  // place, then (if given) adds the new one per hemisphere via NVMesh.loadLayer.
+  async setSurfaceOverlay(overlay: SurfaceOverlay | null): Promise<void> {
+    if (this.#displayMeshes.length < 2) return
+    const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
+    if (this.#atlasLayerIndex >= 0) {
+      for (const mesh of this.#displayMeshes) {
+        const m = mesh as unknown as { layers?: unknown[]; updateMesh?: (gl: WebGL2RenderingContext) => void }
+        if (m.layers && m.layers.length > this.#atlasLayerIndex) m.layers.splice(this.#atlasLayerIndex, 1)
+        m.updateMesh?.(gl)
+      }
+      this.#atlasLayerIndex = -1
+    }
+    if (overlay) {
+      const hemis: Array<'left' | 'right'> = ['left', 'right']
+      let idx = -1
+      for (let i = 0; i < this.#displayMeshes.length && i < 2; i++) {
+        const mesh = this.#displayMeshes[i]
+        idx = (mesh as unknown as { layers?: unknown[] }).layers?.length ?? 0 // appended layer's index
+        const layer = { ...NVMeshLayerDefaults, url: this.#client.dataUrl(overlay[hemis[i]]), colormapLabel: overlay.table, opacity: 1, showLegend: false }
+        await (NVMesh as unknown as { loadLayer: (layer: unknown, mesh: NVMesh) => Promise<void> }).loadLayer(layer, mesh)
+      }
+      this.#atlasLayerIndex = idx
+      await this.#applyOverlayLut(overlay.table) // re-apply LUT once global_max has settled
+    }
+    this.render.drawScene()
   }
 
   setSurfaceOverlayOpacity(opacity: number): void {
@@ -267,8 +499,107 @@ export class MultiView {
     this.render.drawScene()
   }
 
+  // ---- function ON the surface (single categorical mesh layer with a 256-entry LUT) ----
+  // The layer is loaded ONCE per selection via NVMesh.loadLayer (identical init to the working
+  // atlas overlay), then its per-vertex values are swapped for the F-masked bin indices on every
+  // threshold/brightness change (no re-fetch). Bin 0 is transparent so masked/no-data vertices
+  // vanish. The layer sits ABOVE morphology + atlas; the colortable is re-applied via
+  // setLayerProperty once global_max settles (the same fix the atlas needed).
+  static readonly #FUNC_LAYER_PREFIX = 'brainana-func:'
+  #funcLayerIndex = -1
+  #funcLayerKey: string | null = null
+
+  // Convert a dense 256-entry RGBA LUT into the {R,G,B,A,I} colortable the label path consumes.
+  static #lutToColortable(lut: Uint8ClampedArray): LabelColortable {
+    const R: number[] = []
+    const G: number[] = []
+    const B: number[] = []
+    const A: number[] = []
+    const I: number[] = []
+    const labels: string[] = []
+    for (let i = 0; i < 256; i++) {
+      R.push(lut[i * 4])
+      G.push(lut[i * 4 + 1])
+      B.push(lut[i * 4 + 2])
+      A.push(lut[i * 4 + 3])
+      I.push(i)
+      labels.push('')
+    }
+    return { R, G, B, A, I, labels }
+  }
+
+  #removeFunctionLayer(): void {
+    if (this.#funcLayerIndex < 0) return
+    const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
+    for (const mesh of this.#displayMeshes.slice(0, 2)) {
+      const m = mesh as unknown as { layers?: unknown[]; updateMesh?: (gl: WebGL2RenderingContext) => void }
+      if (m.layers && m.layers.length > this.#funcLayerIndex) m.layers.splice(this.#funcLayerIndex, 1)
+      m.updateMesh?.(gl)
+    }
+    this.#funcLayerIndex = -1
+    this.#funcLayerKey = null
+  }
+
+  // Ensure a function-surface layer exists for `key`, loaded from the .func.gii pair (proper
+  // readLayer init). Returns false if the base surface isn't present.
+  async #ensureFunctionLayer(key: string, pair: SurfacePairUrls): Promise<boolean> {
+    if (this.#funcLayerKey === key && this.#funcLayerIndex >= 0) return true
+    this.#removeFunctionLayer()
+    if (this.#displayMeshes.length < 2) return false
+    const hemiUrls = [pair.left, pair.right]
+    let idx = -1
+    for (let h = 0; h < 2; h++) {
+      const mesh = this.#displayMeshes[h]
+      idx = (mesh as unknown as { layers?: unknown[] }).layers?.length ?? 0
+      // The name MUST end in a real extension: NVMeshLoaders.readLayer picks its parser from the
+      // filename extension and throws (`.toUpperCase()` of undefined) on a name without one.
+      const layer = { url: this.#client.dataUrl(hemiUrls[h]), name: `${MultiView.#FUNC_LAYER_PREFIX}${key}.func.gii`, colormap: 'gray', opacity: 1, cal_min: 0, cal_max: 255 }
+      await (NVMesh as unknown as { loadLayer: (layer: unknown, mesh: NVMesh) => Promise<void> }).loadLayer(layer, mesh)
+    }
+    this.#funcLayerIndex = idx
+    this.#funcLayerKey = key
+    return true
+  }
+
+  // Show the function-on-surface layer: load once for `key`, then swap in the F-masked bins and
+  // apply the 256-entry LUT + opacity. `key` distinguishes retinotopy/somatotopy so switching
+  // between them reloads the correct .func.gii; a threshold/brightness change keeps the same key
+  // and only mutates values.
+  async setFunctionSurface(key: string, pair: SurfacePairUrls, leftBins: Float32Array, rightBins: Float32Array, lut: Uint8ClampedArray, opacity: number): Promise<void> {
+    const ok = await this.#ensureFunctionLayer(key, pair)
+    if (!ok || this.#funcLayerIndex < 0) return
+    const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
+    const table = MultiView.#lutToColortable(lut)
+    const bins = [leftBins, rightBins]
+    for (let h = 0; h < 2; h++) {
+      const mesh = this.#displayMeshes[h]
+      const m = mesh as unknown as { layers?: Array<Record<string, unknown>>; updateMesh?: (gl: WebGL2RenderingContext) => void }
+      const layer = m.layers?.[this.#funcLayerIndex]
+      if (!layer) continue
+      layer.values = bins[h]
+      layer.nFrame4D = 1
+      layer.frame4D = 0
+      layer.opacity = opacity
+      layer.global_min = 0
+      layer.global_max = 255
+      layer.cal_min = 0
+      layer.cal_max = 255
+      layer.isTransparentBelowCalMin = false
+      m.updateMesh?.(gl)
+    }
+    await this.#applyLabelLutAt(this.#funcLayerIndex, table)
+    this.render.drawScene()
+  }
+
+  clearSurfaceFunctionLayers(): void {
+    this.#removeFunctionLayer()
+    this.render.drawScene()
+  }
+
+  #baseScale = 2.0 // current surface's fit scale; view presets scale relative to this (Req 9)
   setSurfaceScale(kind: string): void {
     const scale = SURFACE_SCALE[kind] ?? 2.0
+    this.#baseScale = scale
     try {
       this.render.scene.volScaleMultiplier = scale
       this.render.drawScene()
@@ -307,6 +638,14 @@ export class MultiView {
   // World position of a node on the CURRENTLY displayed surface.
   nodeWorld(node: SurfaceNode): [number, number, number] | null {
     const mesh = this.#displayMeshes[node.hemi]
+    if (!mesh) return null
+    const v = node.index * 3
+    return [mesh.pts[v], mesh.pts[v + 1], mesh.pts[v + 2]]
+  }
+
+  // World position of a node on the REFERENCE (volume-space) surface — for crosshair distance.
+  referenceVertexWorld(node: SurfaceNode): [number, number, number] | null {
+    const mesh = this.#refMeshes[node.hemi]
     if (!mesh) return null
     const v = node.index * 3
     return [mesh.pts[v], mesh.pts[v + 1], mesh.pts[v + 2]]
@@ -443,19 +782,23 @@ export class MultiView {
   }
 
   // ---- camera view presets (surf row) ----
-  // Absolute NiiVue azimuth/elevation per named view. Lateral/Medial depend on the hemisphere.
-  // NOTE: these angle constants are the most likely thing to need a visual tweak.
+  // Absolute NiiVue azimuth/elevation per named view, plus a per-view zoom so each reframes to
+  // best-fit (Req 9). Lateral/Medial are hemisphere-aware (Req 8: the left hemisphere's lateral
+  // face is toward RIGHT_SIDE azimuth, its medial face toward LEFT_SIDE — the mirror of before).
+  // NOTE: the angle + scale constants are the most likely things to need a visual tweak.
   setView(name: 'lateral' | 'medial' | 'ventral' | 'dorsal' | 'anterior' | 'posterior', preferHemi: 0 | 1 = 0): void {
     const LEFT_SIDE = 270
     const RIGHT_SIDE = 90
+    // Dorsal/Ventral look down the long anterior–posterior axis, so they need to zoom out.
+    const VIEW_FACTOR: Record<string, number> = { lateral: 1, medial: 1, anterior: 1, posterior: 1, dorsal: 0.72, ventral: 0.72 }
     let az = 110
     let el = 0
     switch (name) {
       case 'lateral':
-        az = preferHemi === 0 ? LEFT_SIDE : RIGHT_SIDE
+        az = preferHemi === 0 ? RIGHT_SIDE : LEFT_SIDE
         break
       case 'medial':
-        az = preferHemi === 0 ? RIGHT_SIDE : LEFT_SIDE
+        az = preferHemi === 0 ? LEFT_SIDE : RIGHT_SIDE
         break
       case 'anterior':
         az = 180
@@ -473,6 +816,7 @@ export class MultiView {
         break
     }
     try {
+      this.render.scene.volScaleMultiplier = this.#baseScale * (VIEW_FACTOR[name] ?? 1)
       this.render.setRenderAzimuthElevation(az, el)
       this.render.drawScene()
     } catch {

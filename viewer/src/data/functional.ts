@@ -17,19 +17,27 @@ export interface FunctionalMode {
   fFrame: number | null
   /** NiiVue colormap. */
   colormap: string
+  /** Display range. cal_min is slightly negative so value 0 maps to the first (opaque) LUT
+   *  entry, leaving the transparent index-0 for masked voxels (set below cal_min). */
+  calMin: number
+  calMax: number
 }
+
+// v1.2.25 display ranges (the slightly-negative cal_min reserves the transparent LUT slot).
+const POLAR_MIN = -Math.PI - (2 * Math.PI) / 254
+const POLAR_MAX = Math.PI
 
 // Derive the selectable modes for a functional map from its manifest frame indices.
 export function functionalModes(kind: FunctionalKind, frames: Record<string, number>): FunctionalMode[] {
   if (kind === 'retinotopy') {
     const modes: FunctionalMode[] = []
-    if (frames.polar != null) modes.push({ label: 'Polar angle', valueFrame: frames.polar, fFrame: frames.polarF ?? null, colormap: 'hsv' })
-    if (frames.eccentricity != null) modes.push({ label: 'Eccentricity', valueFrame: frames.eccentricity, fFrame: frames.eccentricityF ?? null, colormap: 'plasma' })
+    if (frames.polar != null) modes.push({ label: 'Polar angle', valueFrame: frames.polar, fFrame: frames.polarF ?? null, colormap: 'brainana_polar_angle', calMin: POLAR_MIN, calMax: POLAR_MAX })
+    if (frames.eccentricity != null) modes.push({ label: 'Eccentricity', valueFrame: frames.eccentricity, fFrame: frames.eccentricityF ?? null, colormap: 'brainana_eccentricity', calMin: -0.0394, calMax: 10 })
     return modes
   }
   // somatotopy: reversed blue->red LUT so 0 is blue and 100 is red
   const modes: FunctionalMode[] = []
-  if (frames.phase != null) modes.push({ label: 'Phase', valueFrame: frames.phase, fFrame: frames.fstat ?? null, colormap: 'blue2red' })
+  if (frames.phase != null) modes.push({ label: 'Phase', valueFrame: frames.phase, fFrame: frames.fstat ?? null, colormap: 'brainana_somatotopy', calMin: -0.3937, calMax: 100 })
   return modes
 }
 
@@ -60,6 +68,113 @@ export function applyThresholdMask(value: ArrayLike<number>, fstat: ArrayLike<nu
   for (let i = 0; i < value.length; i++) {
     const f = fstat[i]
     out[i] = Number.isFinite(f) && f >= threshold ? value[i] : NaN
+  }
+  return out
+}
+
+// ---- Function ON the surface (categorical mesh-layer LUT + quantization) ----
+// Ported verbatim from the authoritative v1.2.25 source (main.ts:2648-2726). A 256-entry
+// categorical LUT is applied to per-vertex bin indices; bin 0 is transparent so masked /
+// no-data vertices disappear, and the surface overlay alpha-blends over the morphology layer.
+
+export type SurfaceFunctionMode = 'polar' | 'eccentricity' | 'somatotopy'
+
+// 256x4 RGBA label LUT (min 0, max 255). Bin 0 reserved transparent.
+export interface SurfaceLabelLut {
+  lut: Uint8ClampedArray
+  min: number
+  max: number
+  labels: string[]
+}
+
+type ColorStop = { t: number; rgb: [number, number, number] }
+
+function interpolateRgb(stops: ColorStop[], t: number): [number, number, number] {
+  const x = Math.max(0, Math.min(1, t))
+  for (let index = 1; index < stops.length; index += 1) {
+    const right = stops[index]
+    const left = stops[index - 1]
+    if (x <= right.t) {
+      const span = Math.max(right.t - left.t, Number.EPSILON)
+      const a = (x - left.t) / span
+      return [
+        Math.round(left.rgb[0] + (right.rgb[0] - left.rgb[0]) * a),
+        Math.round(left.rgb[1] + (right.rgb[1] - left.rgb[1]) * a),
+        Math.round(left.rgb[2] + (right.rgb[2] - left.rgb[2]) * a),
+      ]
+    }
+  }
+  return stops[stops.length - 1].rgb
+}
+
+const POLAR_SURFACE_STOPS: ColorStop[] = [
+  { t: 0.0, rgb: [0, 255, 0] },
+  { t: 0.25, rgb: [0, 0, 255] },
+  { t: 0.5, rgb: [0, 255, 0] },
+  { t: 0.75, rgb: [255, 0, 0] },
+  { t: 1.0, rgb: [0, 255, 0] },
+]
+const ECC_SURFACE_STOPS: ColorStop[] = [
+  { t: 0.0, rgb: [255, 0, 0] },
+  { t: 0.2, rgb: [255, 140, 0] },
+  { t: 0.4, rgb: [255, 255, 0] },
+  { t: 0.6, rgb: [0, 200, 0] },
+  { t: 0.8, rgb: [0, 255, 255] },
+  { t: 1.0, rgb: [0, 70, 255] },
+]
+
+// Build the categorical surface LUT. `brightness` >= 1 blends channels toward white; < 1 scales
+// them down. Applied to the LUT ONLY — never to values, thresholds, or the volume overlay.
+// Somatotopy samples the eccentricity ramp reversed (body-position 0 = blue, 100 = red).
+export function createFunctionalSurfaceLut(mode: SurfaceFunctionMode, brightness = 1): SurfaceLabelLut {
+  const rgba = new Uint8ClampedArray(256 * 4)
+  const labels = new Array<string>(256).fill('')
+  rgba.set([0, 0, 0, 0], 0) // bin 0 transparent
+  const stops = mode === 'polar' ? POLAR_SURFACE_STOPS : ECC_SURFACE_STOPS
+  const brighten = (channel: number): number =>
+    brightness >= 1
+      ? Math.min(255, Math.round(channel + (255 - channel) * (brightness - 1)))
+      : Math.max(0, Math.round(channel * brightness))
+  for (let bin = 1; bin < 256; bin += 1) {
+    const t = (bin - 1) / 254
+    const colorT = mode === 'somatotopy' ? 1 - t : t
+    const [r0, g0, b0] = interpolateRgb(stops, colorT)
+    rgba.set([brighten(r0), brighten(g0), brighten(b0), 255], bin * 4)
+  }
+  return { lut: rgba, min: 0, max: 255, labels }
+}
+
+// Map per-vertex values to LUT bin indices 1..255; sentinel / non-finite / <= -999 → bin 0.
+// Polar wraps to [0, 2π); eccentricity/somatotopy clamp to [0, max] (somato 100, else 10).
+export function quantizeFunctionalSurfaceValues(values: ArrayLike<number>, mode: SurfaceFunctionMode): Float32Array {
+  const bins = new Float32Array(values.length)
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index]
+    if (!Number.isFinite(value) || value <= -999) {
+      bins[index] = 0
+      continue
+    }
+    let t: number
+    if (mode === 'polar') {
+      const wrapped = (((value + Math.PI) % (2 * Math.PI)) + 2 * Math.PI) % (2 * Math.PI)
+      t = wrapped / (2 * Math.PI)
+    } else {
+      const maximum = mode === 'somatotopy' ? 100 : 10
+      t = Math.max(0, Math.min(maximum, value)) / maximum
+    }
+    bins[index] = 1 + Math.min(254, Math.max(0, Math.round(t * 254)))
+  }
+  return bins
+}
+
+// Apply the F-threshold on the surface: for each vertex, keep the quantized bin only where the
+// F-stat frame is finite and >= threshold; otherwise force bin 0 (transparent). Mirrors the
+// volume masking but operates on already-quantized surface bins.
+export function maskSurfaceBinsByF(bins: Float32Array, fstat: ArrayLike<number>, threshold: number): Float32Array {
+  const out = new Float32Array(bins.length)
+  for (let i = 0; i < bins.length; i++) {
+    const f = fstat[i]
+    out[i] = Number.isFinite(f) && f >= threshold ? bins[i] : 0
   }
   return out
 }

@@ -7,6 +7,7 @@
   --accent: #4c8bf5;
   --border: #2a2f3a;
   --danger: #e5595b;
+  --label-gold: #f1d272;
   --info-height: clamp(172px, 23vh, 226px);
   --legend-width: clamp(220px, 15vw, 280px);
   color-scheme: dark;
@@ -23,18 +24,18 @@ body {
 #app { height: 100vh; display: flex; flex-direction: column; }
 
 /* ---------- top bar ---------- */
+/* 2-row × 4-column grid; children are appended column-major (grid-auto-flow: column). */
 .toolbar {
-  display: flex; align-items: stretch; gap: 14px;
+  display: grid; grid-template-rows: auto auto; grid-auto-flow: column;
+  justify-content: start; align-items: center; column-gap: 18px; row-gap: 5px;
   padding: 8px 14px; border-bottom: 1px solid var(--border);
   background: var(--panel); flex: 0 0 auto;
 }
-.tb-rows { display: flex; flex-direction: column; gap: 6px; flex: 1 1 auto; min-width: 0; }
-.tb-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.tb-row > label.tb-field:last-child { margin-left: auto; } /* push Monkey to the right of the surf row */
-.tb-field.layer > .layer-label { min-width: 30px; } /* align the surf field under the vol field */
+.tb-cell { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .views { display: flex; gap: 4px; flex-wrap: wrap; }
 .view-btn { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 4px 9px; border-radius: 6px; cursor: pointer; font-size: 12px; }
 .view-btn:hover { border-color: var(--accent); }
+select.narrow { width: 96px; }
 .brand { font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .badge { font-size: 10px; padding: 1px 6px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); }
 .tb-field { display: flex; align-items: center; gap: 6px; color: var(--muted); }
@@ -78,11 +79,18 @@ button { font: inherit; }
   gap: 1px; background: var(--border); min-height: 0;
 }
 .atlas-legend { position: relative; grid-column: 2; grid-row: 1; background: var(--panel); padding: 10px 10px 0; min-height: 0; display: flex; flex-direction: column; }
-.legend-resizer {
-  position: absolute; left: 0; top: 0; bottom: 0; width: 7px; transform: translateX(-50%);
-  cursor: col-resize; z-index: 15; touch-action: none;
+/* Splitter sitting on the seam between the viewer area and the side panel. Child of `main`, so
+   it stacks above the surface canvas and stays on the boundary as --legend-width changes. */
+.panel-resizer {
+  position: absolute; top: 0; bottom: var(--info-height);
+  right: var(--legend-width); transform: translateX(50%);
+  width: 10px; z-index: 40; cursor: col-resize; touch-action: none;
 }
-.legend-resizer:hover, .legend-resizer:active { background: var(--accent); opacity: 0.55; }
+.panel-resizer::after {
+  content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px;
+  transform: translateX(-50%); background: transparent;
+}
+.panel-resizer:hover::after, .panel-resizer:active::after { background: var(--accent); }
 .legend-title { font-size: 13px; font-weight: 600; }
 .legend-subtitle { font-size: 11px; margin-bottom: 6px; }
 .legend-actions { display: flex; align-items: center; gap: 4px; margin-bottom: 6px; flex-wrap: wrap; }
@@ -118,21 +126,51 @@ button { font: inherit; }
 .chip-row { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
 .chip { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); padding: 4px 9px; border-radius: 999px; cursor: pointer; font-size: 12px; }
 .chip.active { border-color: var(--accent); color: #fff; }
+/* One column per subsection; Anatomy widest, Function widened so labels never truncate. */
 .info-panel {
   grid-column: 1 / -1; grid-row: 2; background: var(--panel);
-  display: grid; grid-template-columns: 1.1fr 1.4fr 1fr 1.3fr 1fr; gap: 1px; min-height: 0;
+  display: grid; min-height: 0;
+  grid-template-columns:
+    minmax(150px, .68fr)   /* Coordinates */
+    minmax(285px, 1.7fr)   /* Anatomy     */
+    minmax(180px, .88fr)   /* Surface     */
+    minmax(200px, 1fr)     /* Function    */
+    minmax(185px, .86fr);  /* Visual field */
 }
-.info-col { background: var(--panel); padding: 10px 12px; overflow: auto; }
-.info-col h3 { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
-.report-row { display: grid; grid-template-columns: 54px 44px minmax(0, 1fr); gap: 6px; font-size: 12px; padding: 1px 0; }
-.report-name { color: var(--muted); }
-.report-id { font-variant-numeric: tabular-nums; text-align: right; color: var(--muted); }
-.report-label { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.info-col { background: var(--panel); padding: 12px 16px; overflow: auto; min-width: 0; border-right: 1px solid var(--border); }
+.info-col:last-child { border-right: 0; }
+.info-col h3 { margin: 0 0 9px; font-size: 14px; font-weight: 700; line-height: 1.2; color: var(--text); white-space: nowrap; }
+
+/* Label:value columns (Coordinates / Surface / Function): a 2-column grid, no truncation. */
+.info-col dl { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 12px; font-size: 12px; line-height: 1.35; }
+.info-col dt { color: var(--muted); }
+.info-col dd { margin: 0; color: var(--text); overflow-wrap: anywhere; }
+.func-subheading { margin: 7px 0 4px; font-size: 12.5px; font-weight: 700; line-height: 1.15; color: var(--text); }
+.func-subheading:first-child { margin-top: 0; }
+
+/* Anatomy rows: atlas name · id · region label (gold), zebra-striped. */
+.atlas-report-row {
+  display: grid; grid-template-columns: 82px 46px minmax(120px, 1fr); align-items: baseline; gap: 8px;
+  padding: 2px 4px; border-radius: 3px; font-size: 11px;
+}
+.atlas-report-row:nth-child(odd) { background: rgba(255,255,255,.025); }
+.atlas-report-name { color: var(--muted); font-weight: 650; }
+.atlas-report-id { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
+.atlas-report-label { color: var(--label-gold); overflow-wrap: anywhere; }
+.atlas-report-label.unknown { color: var(--muted); }
+
+/* Neighborhood dropdown above the visual-field plot. */
+.neighborhood-control { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 10px; }
+.neighborhood-control select { min-width: 84px; padding: 3px 5px; font-size: 10px; }
+.vf-canvas { display: block; width: min(100%, calc(var(--info-height) - 30px), 275px); aspect-ratio: 1; height: auto; margin: 2px auto 0; }
+.field.inline { flex-direction: row; align-items: center; gap: 6px; }
+.float-panel-close { position: absolute; top: 8px; right: 10px; background: none; border: 0; color: var(--muted); font-size: 18px; cursor: pointer; line-height: 1; }
+.float-panel-head { position: relative; }
 
 .slice-pane, .surface-pane { position: relative; background: #000; min-height: 0; overflow: hidden; }
 .nv-canvas { width: 100%; height: 100%; display: block; }
 .orientation-widget {
-  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  position: absolute; right: 10px; bottom: 10px;
   width: 96px; height: 96px; pointer-events: none;
 }
 .orientation-origin { fill: #888; }
@@ -164,6 +202,17 @@ button { font: inherit; }
 }
 .dashboard[data-layout="column"] .slice-pane { grid-column: 1; grid-row: 1; }
 .dashboard[data-layout="column"] .surface-pane { grid-column: 2; grid-row: 1; }
+
+/* vol/surf checkbox off → hide that pane; the remaining pane fills the viewer area regardless of
+   the active montage layout. The :not() guard boosts specificity above the [data-layout] rules. */
+.dashboard[data-vol="off"] .slice-pane { display: none; }
+.dashboard[data-surf="off"] .surface-pane { display: none; }
+.dashboard[data-vol="off"]:not([data-surf="off"]) .viewer-area,
+.dashboard[data-surf="off"]:not([data-vol="off"]) .viewer-area {
+  grid-template-columns: 1fr; grid-template-rows: 1fr;
+}
+.dashboard[data-vol="off"]:not([data-surf="off"]) .surface-pane { grid-column: 1; grid-row: 1; }
+.dashboard[data-surf="off"]:not([data-vol="off"]) .slice-pane { grid-column: 1; grid-row: 1; }
 
 /* placeholder until a monkey loads */
 .monkey-placeholder {

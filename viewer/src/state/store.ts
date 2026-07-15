@@ -111,7 +111,7 @@ export function createViewerStore(): { store: Store<ViewerState>; crosshair: Cha
     surfaceKind: 'inflated',
     volumeVisible: true,
     surfaceVisible: true,
-    layout: 'grid',
+    layout: 'column',
     markerMode: 'crosshair3d',
     activeAtlas: null,
     atlasLevel: 6,

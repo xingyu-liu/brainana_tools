@@ -279,7 +279,6 @@ export function buildManifest({ outputRoot, subjectDir, fileUrl }) {
       pial: surfacePair('pial', true),
       smoothwm: surfacePair('smoothwm'),
       inflated: derivedPair('inflated'),
-      veryinflated: derivedPair('veryinflated'),
       sphere: derivedPair('sphere'),
       white: surfacePair('white', true),
     },

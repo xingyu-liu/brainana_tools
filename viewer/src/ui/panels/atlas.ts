@@ -31,7 +31,7 @@ export function createAtlasPanel(manifest: Manifest, cb: AtlasPanelCallbacks): A
 
   for (let i = 1; i <= 6; i++) {
     if (!manifest.atlases?.charm?.[String(i)]) continue
-    const b = h('button', { type: 'button', class: 'chip' }, [`ARM ${i}`]) as HTMLButtonElement
+    const b = h('button', { type: 'button', class: 'chip' }, [`ARM${i}`]) as HTMLButtonElement
     b.addEventListener('click', () => cb.onSelect({ atlas: 'ARM', level: i }))
     buttons.set(`ARM${i}`, b)
     row.append(b)
