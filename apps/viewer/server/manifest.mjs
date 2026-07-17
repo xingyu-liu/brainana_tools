@@ -37,28 +37,6 @@ function pick(files, patterns) {
   }
   return null
 }
-function filesRecursive(dir, maxDepth = 4) {
-  if (!exists(dir) || maxDepth < 0) return []
-  const out = []
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-    const abs = path.join(dir, entry.name)
-    if (entry.isFile() || entry.isSymbolicLink()) out.push(abs)
-    else if (entry.isDirectory()) out.push(...filesRecursive(abs, maxDepth - 1))
-  }
-  return out
-}
-function pickFunctionalMap(anatDir, preferredFiles, pattern) {
-  const preferred = pick(preferredFiles, [pattern])
-  if (preferred) return preferred
-  const candidates = filesRecursive(anatDir, 4)
-    .filter((f) => pattern.test(path.basename(f)))
-    .sort((a, b) => {
-      const aT1 = a.includes(`${path.sep}atlas_space-T1w${path.sep}`) ? 0 : 1
-      const bT1 = b.includes(`${path.sep}atlas_space-T1w${path.sep}`) ? 0 : 1
-      return aT1 - bT1 || a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
-    })
-  return candidates[0] ?? null
-}
 
 // ---------------------------------------------------------------------------
 // Flexible layout resolution (flat sub-*/anat OR sub-*/ses-*/anat)
@@ -185,9 +163,17 @@ export function buildManifest({ outputRoot, subjectDir, fileUrl }) {
   if (!resolved) throw new Error('Subject has no anat directory')
   const { anatDir: anat, session } = resolved
   const anatFiles = filesIn(anat)
+  // Pick ONE atlas space directory, preferring the space that matches the display base. The default
+  // slice base is the FreeSurfer norm.mgz (fsnative), so an fsnative-space atlas overlay is
+  // voxel-aligned to it and needs no resample; T1w/scanner are ordered fallbacks for older runs.
+  // ALL volume-side assets (label volume, .tsv LUT, retino/somato functional volumes) come from
+  // this single chosen dir — no per-file cross-space fallback. (Surface .func.gii overlays are
+  // fsnative-only by nature and are resolved separately below.)
+  const fsnativeAtlas = path.join(anat, 'atlas_space-fsnative')
   const t1Atlas = path.join(anat, 'atlas_space-T1w')
   const scannerAtlas = path.join(anat, 'atlas_space-scanner')
-  const atlasDir = exists(t1Atlas) ? t1Atlas : scannerAtlas
+  const hasAtlasVolume = (dir) => filesIn(dir).some((f) => /^atlas-[^_]+_space-.*\.nii\.gz$/i.test(path.basename(f)))
+  const atlasDir = [fsnativeAtlas, t1Atlas, scannerAtlas].find(hasAtlasVolume) ?? t1Atlas
   const atlasFiles = filesIn(atlasDir)
   const anatomy = pick(anatFiles, [
     /space-T1w_desc-preproc_T1w_brain\.nii\.gz$/i,
@@ -213,27 +199,58 @@ export function buildManifest({ outputRoot, subjectDir, fileUrl }) {
     }
   }
   // Precomputed surface (fsnative) maps: per-hemisphere .func.gii projected by the pipeline —
-  // no client-side volume→surface projection needed.
-  const fsnativeFiles = filesIn(path.join(anat, 'atlas_space-fsnative'))
+  // no client-side volume→surface projection needed. Surface data only ever exists in fsnative
+  // space, so these are always read from atlas_space-fsnative regardless of which space the atlas
+  // VOLUME was chosen from above; null (no surface layer) when that dir is absent.
+  const fsnativeFiles = filesIn(fsnativeAtlas)
   const surfacePairFor = (base) => {
     const l = pick(fsnativeFiles, [new RegExp(`${base}_space-fsnative_hemi-L.*\\.func\\.gii$`, 'i')])
     const r = pick(fsnativeFiles, [new RegExp(`${base}_space-fsnative_hemi-R.*\\.func\\.gii$`, 'i')])
     return l && r ? { left: fileUrl(l), right: fileUrl(r) } : null
   }
 
-  // Each atlas: its label volume + the .tsv LUT sidecar + the precomputed surface pair.
-  const atlasEntry = (base, volFile, lutFile) => (volFile ? { volume: fileUrl(volFile), labels: lutFile ? fileUrl(lutFile) : null, surface: surfacePairFor(base) } : null)
-  const atlas = {}
-  for (let i = 1; i <= 6; i++) {
-    atlas[i] = atlasEntry(
-      `atlas-ARM${i}`,
-      pick(atlasFiles, [new RegExp(`atlas-ARM${i}.*\\.nii\\.gz$`, 'i')]),
-      pick(atlasFiles, [new RegExp(`atlas-ARM${i}\\.tsv$`, 'i')]),
-    )
+  // Each atlas: its label volume + the .tsv LUT sidecar (may be absent) + the precomputed surface
+  // pair. Volume and LUT both come from the single chosen `atlasDir` (whatever space won above);
+  // the surface pair is always fsnative. Discovery is generic: every `atlas-<name>_space-*` label
+  // volume in that dir is picked up (no per-atlas special-casing), EXCEPT retinotopy/somatotopy
+  // which are functional maps handled below.
+  const FUNCTIONAL_ATLASES = new Set(['retinotopy', 'somatotopy'])
+  const atlasEntryFor = (name) => {
+    const base = `atlas-${name}`
+    const volFile = pick(atlasFiles, [new RegExp(`^${escapeRegex(base)}_space-.*\\.nii\\.gz$`, 'i')])
+    if (!volFile) return null
+    const lutFile = pick(atlasFiles, [new RegExp(`^${escapeRegex(base)}\\.tsv$`, 'i')])
+    return { name, label: name, volume: fileUrl(volFile), labels: lutFile ? fileUrl(lutFile) : null, surface: surfacePairFor(base) }
   }
-  const d99 = atlasEntry('atlas-D99', pick(atlasFiles, [/atlas-D99.*\.nii\.gz$/i]), pick(atlasFiles, [/atlas-D99\.tsv$/i]))
-  const retino = pickFunctionalMap(anat, atlasFiles, /^atlas-retinotopy_space-T1w_.*\.nii(?:\.gz)?$/i)
-  const somato = pickFunctionalMap(anat, atlasFiles, /^atlas-somatotopy_space-T1w_.*\.nii(?:\.gz)?$/i)
+  // Collect distinct atlas names from the label volumes present on disk.
+  const atlasNames = []
+  const seenAtlas = new Set()
+  for (const f of atlasFiles) {
+    const m = path.basename(f).match(/^atlas-([^_]+)_space-[^_]*.*\.nii\.gz$/i)
+    if (!m) continue
+    const name = m[1]
+    if (FUNCTIONAL_ATLASES.has(name.toLowerCase()) || seenAtlas.has(name)) continue
+    seenAtlas.add(name)
+    atlasNames.push(name)
+  }
+  // Order: ARM<n> numerically first, then the rest alphabetically (numeric collation).
+  const armLevel = (name) => {
+    const m = name.match(/^ARM(\d+)$/i)
+    return m ? Number(m[1]) : null
+  }
+  atlasNames.sort((a, b) => {
+    const la = armLevel(a)
+    const lb = armLevel(b)
+    if (la != null && lb != null) return la - lb
+    if (la != null) return -1
+    if (lb != null) return 1
+    return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+  })
+  const atlasList = atlasNames.map(atlasEntryFor).filter(Boolean)
+  // Functional maps come from the same chosen atlasDir (matching whatever space the atlas volumes
+  // use), so the retino/somato overlay is voxel-aligned to the base just like the atlases.
+  const retino = pick(atlasFiles, [/^atlas-retinotopy_space-.*\.nii(?:\.gz)?$/i])
+  const somato = pick(atlasFiles, [/^atlas-somatotopy_space-.*\.nii(?:\.gz)?$/i])
   const scannerReference = pick(anatFiles, [/space-scanner_T1w\.nii\.gz$/i])
   const scannerToT1w = pick(anatFiles, [/from-scanner_to-T1w_mode-image_xfm\.mat$/i])
   const templates = buildTemplateManifest(anatFiles, fileUrl)
@@ -257,9 +274,9 @@ export function buildManifest({ outputRoot, subjectDir, fileUrl }) {
     relativePath: path.relative(outputRoot, subjectDir),
     anatomy: fileUrl(anatomy),
     volumes,
-    // atlas[i] / d99 are already { volume, labels } objects (or null) from atlasEntry —
+    // atlasList entries are already { name, label, volume, labels, surface } objects —
     // emit them directly; do NOT re-wrap in fileUrl (that would pass an object to path.relative).
-    atlases: { charm: atlas, d99 },
+    atlases: atlasList,
     function: {
       retinotopy: retino ? { combined: fileUrl(retino), frames: { polar: 0, polarF: 1, eccentricity: 2, eccentricityF: 3 }, surface: surfacePairFor('atlas-retinotopy') } : null,
       somatotopy: somato ? { combined: fileUrl(somato), frames: { phase: 0, fstat: 1 }, surface: surfacePairFor('atlas-somatotopy') } : null,
@@ -297,7 +314,7 @@ export function buildManifest({ outputRoot, subjectDir, fileUrl }) {
     capabilities: {
       volume: Boolean(anatomy),
       surfaces: Boolean(surfacePair('pial', true)),
-      atlases: Boolean(Object.values(atlas).some(Boolean) || d99),
+      atlases: atlasList.length > 0,
       retinotopy: Boolean(retino),
       somatotopy: Boolean(somato),
     },

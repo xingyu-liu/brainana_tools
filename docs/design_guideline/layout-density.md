@@ -24,8 +24,9 @@ approved its look). We did **not** go "maximum tight" — interactive controls s
 clickable.
 
 **Headers: two roles, each internally consistent.**
-- **Panel titles** (`function` / `atlas` / `morphology`, `.side-panel-head`) stay **prominent bold**
-  (weight 700, ~13px, sentence case). Only their spacing was normalized.
+- **Panel titles** (`atlas` / `morphology` / `func map`, `.side-panel-head`) stay **prominent bold**
+  (weight 700, ~13px) and are CSS-uppercased (`text-transform: uppercase`) — distinguished from
+  sub-headers by weight/color, not by case. Only their spacing was normalized.
 - **Sub-headers** (`COLOR DISPLAY`, the info-column `h3`s, collapsible `group-head`) are unified to
   **one muted small-caps spec**: `font-size: var(--fs-sm)` · `font-weight: 700` ·
   `letter-spacing: .06em` · `text-transform: uppercase` · `color: var(--muted)`.
@@ -86,4 +87,4 @@ The single place to re-tune panel tightness:
 
 Internal **canvas** rendering constants are not DOM tightness and were left alone:
 `legend.ts` (`size = 120`) and `visualFieldPlot.ts` canvas font sizes. The `.icon-btn` (34px square)
-in the Datasets dialog is taller than the now-22px text inputs beside it — cosmetic, dialog-only.
+in the Datasets dialog is taller than the now-20px (`--ctl-h`) text inputs beside it — cosmetic, dialog-only.

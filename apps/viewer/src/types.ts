@@ -7,6 +7,8 @@ export interface SurfacePair {
 }
 
 export interface AtlasEntry {
+  name: string
+  label: string
   volume: string
   labels: string | null
   surface: SurfacePair | null
@@ -26,10 +28,7 @@ export interface Manifest {
   anatomy: string | null
   volumes: Array<{ key: string; label: string; url: string }>
 
-  atlases: {
-    charm: Record<string, AtlasEntry | null>
-    d99: AtlasEntry | null
-  }
+  atlases: AtlasEntry[]
   function: {
     retinotopy: FunctionalMap | null
     somatotopy: FunctionalMap | null

@@ -19,7 +19,7 @@ function exists(p) {
 export class LocalDataSource {
   type = 'local'
 
-  constructor({ id, root, label, manifest } = {}) {
+  constructor({ id, root, label, customLabel, manifest } = {}) {
     if (!root) throw new Error('LocalDataSource requires a root path')
     // The domain manifest provider ({ isSubjectDir, buildManifest, ... }) is injected so core
     // never imports a tool's domain. Required: a missing provider is always a bug, so fail loud.
@@ -31,6 +31,9 @@ export class LocalDataSource {
     this.id = id
     this.root = resolved
     this.label = label || path.basename(resolved) || resolved
+    // User-editable display name, overriding `label` in pickers when set. Null = fall back to
+    // `label`. Held in RAM only (see PATCH /api/sources/:id); lost on server restart.
+    this.customLabel = customLabel ?? null
     this.manifest = manifest
   }
 

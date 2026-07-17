@@ -1,7 +1,7 @@
 // Unit tests for the pure functional-map math (viewer/src/data/functional.ts).
 // Run via Node's native TypeScript support (Node >= 22.18 strips types on import).
 import assert from 'node:assert/strict'
-import { finiteExtrema, applyThresholdMask, functionalModes, createFunctionalSurfaceLut, quantizeFunctionalSurfaceValues, maskSurfaceBinsByF, maskSurfaceBinsByValue, surfaceLutFromColormap, mapFunctionalDisplay } from '../apps/viewer/src/data/functional.ts'
+import { finiteExtrema, applyThresholdMask, functionalModes, createFunctionalSurfaceLut, quantizeFunctionalSurfaceValues, maskSurfaceBinsByF, maskSurfaceBinsByValue, surfaceLutFromColormap, mapFunctionalDisplay, quantizeScalarToBins } from '../apps/viewer/src/data/functional.ts'
 
 let passed = 0
 const ok = (name) => {
@@ -38,8 +38,11 @@ assert.deepEqual(
   retino.map((m) => [m.label, m.valueFrame, m.fFrame, m.colormap]),
   [['polar angle', 0, 1, 'brainana_polar_lr'], ['eccentricity', 2, 3, 'brainana_eccentricity']],
 )
+// Stable ids drive rendering logic (legend shape / surface LUT) independent of label casing.
+assert.deepEqual(retino.map((m) => m.id), ['polar', 'eccentricity'], 'retinotopy mode ids')
 const somato = functionalModes('somatotopy', { phase: 0, fstat: 1 })
 assert.deepEqual(somato.map((m) => [m.label, m.valueFrame, m.fFrame, m.colormap]), [['body position', 0, 1, 'brainana_somatotopy']])
+assert.equal(somato[0].id, 'bodyPosition', 'somatotopy mode id')
 assert.equal(somato[0].colormap, 'brainana_somatotopy', 'somatotopy uses the reversed blue->red LUT')
 // display ranges have a slightly-negative cal_min (reserves the transparent LUT slot for masking)
 assert.ok(retino[0].calMin < 0 && retino[0].calMax > 3, 'polar cal range')
@@ -160,6 +163,24 @@ ok('maskSurfaceBinsByF hides sub-threshold vertices on the surface')
   // sentinel / non-finite still -> bin 0 (transparent)
   assert.equal(quantizeFunctionalSurfaceValues(new Float32Array([NaN, -999]), 'polar', { min: -1, max: 1 })[0], 0, 'NaN -> bin 0')
   ok('quantizeFunctionalSurfaceValues honors a display range (linear clamp, sentinel transparent)')
+}
+
+// --- quantizeScalarToBins: continuous-atlas quantization (shared by volume + surface) ---
+{
+  // CortHierarchy-like: background 0, gradient 1..2. Window [1,2].
+  const bins = quantizeScalarToBins(new Float32Array([0, 1, 1.5, 2, NaN, -0.5, 3]), 1, 2)
+  assert.equal(bins[0], 0, 'background value 0 -> bin 0 (transparent)')
+  assert.equal(bins[1], 1, 'value at range.min -> bin 1')
+  assert.equal(bins[3], 255, 'value at range.max -> bin 255')
+  assert.ok(bins[2] > 1 && bins[2] < 255, 'mid value in between')
+  assert.equal(bins[4], 0, 'NaN -> bin 0 (transparent)')
+  assert.equal(bins[5], 1, 'below range clamps to bin 1 (still visible)')
+  assert.equal(bins[6], 255, 'above range clamps to bin 255')
+  // Degenerate window (min == max): all non-background -> bin 1, background stays 0
+  const flat = quantizeScalarToBins(new Float32Array([0, 5, 9]), 3, 3)
+  assert.equal(flat[0], 0, 'background stays 0 for a degenerate window')
+  assert.equal(flat[1], 1, 'degenerate window -> bin 1')
+  ok('quantizeScalarToBins: 0/NaN -> bin 0, endpoints -> 1/255, clamps, degenerate window')
 }
 
 // --- maskSurfaceBinsByValue: hide vertices outside the [lo,hi] window ---

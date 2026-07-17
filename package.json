@@ -4,10 +4,14 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Cross-platform NiiVue viewer for brainana pipeline output (source-first rebuild).",
+  "author": "Brainana",
+  "license": "AGPL-3.0-only",
+  "//main": "Electron entry for the packaged desktop app (electron-builder reads this from the root package.json). Ignored by the browser/headless paths.",
+  "main": "apps/viewer/desktop.mjs",
   "engines": {
     "node": ">=22.18"
   },
-  "//workspaces": "Multi-tool monorepo: shared packages/* consumed by apps/*. Globs match nothing until packages are extracted (harmless no-op meanwhile); see docs/technical-route-and-improvement-plan.md.",
+  "//workspaces": "Multi-tool monorepo: shared packages/* consumed by apps/*. Globs match nothing until packages are extracted (harmless no-op meanwhile); see docs/technical-route.md.",
   "workspaces": [
     "packages/*",
     "apps/*"
@@ -25,9 +29,15 @@
     "dev:web": "vite --config apps/viewer/vite.config.ts",
     "start": "node apps/viewer/launch.mjs",
     "server": "node apps/viewer/server.mjs",
+    "dev:desktop": "npm run build && electron apps/viewer/desktop.mjs",
+    "dist:desktop": "npm run build && electron-builder --config apps/viewer/electron-builder.yml",
     "test": "node scripts/run-tests.mjs"
   },
+  "//dependencies": "Runtime deps of the PACKAGED desktop app. electron-builder derives the shipped node_modules from THIS list, so the three @brainana/* server-side workspace packages must be declared here to be dereferenced into the app.asar. The frontend packages (core-client/ui/niivue-kit/imaging-math) are NOT listed — Vite bundles them into dist/, so they need no runtime node_modules copy.",
   "dependencies": {
+    "@brainana/core-desktop": "*",
+    "@brainana/core-launcher": "*",
+    "@brainana/core-server": "*",
     "ssh2": "^1.16.0"
   },
   "devDependencies": {
@@ -35,7 +45,9 @@
     "vite": "^6.0.0",
     "@niivue/niivue": "^0.69.0",
     "fflate": "^0.8.2",
-    "nifti-reader-js": "^0.8.0"
+    "nifti-reader-js": "^0.8.0",
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
   },
   "//browserslist": "Single source of the evergreen support policy (roadmap §6.3): Chrome/Edge baseline, Firefox/Safari last 2 majors. WebGL2 is a hard requirement gated at runtime in browserCapabilities.ts. Out of scope: mobile/legacy.",
   "browserslist": [

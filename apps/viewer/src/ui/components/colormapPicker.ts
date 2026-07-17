@@ -17,12 +17,14 @@ export interface ColormapPicker {
   value: () => string
   setValue: (key: string) => void
   setGradients: (g: Record<string, string>) => void
+  /** Replace the offered maps (e.g. drop the categorical "labels" entry for a continuous atlas). */
+  setInfos: (infos: ColormapInfo[]) => void
 }
 
 const FALLBACK = 'linear-gradient(90deg, rgb(20,18,13), rgb(236,230,216))'
 
 export function createColormapPicker(opts: ColormapPickerOptions): ColormapPicker {
-  const infos = opts.infos ?? COLORMAP_REGISTRY
+  let infos = opts.infos ?? COLORMAP_REGISTRY
   let gradients = opts.gradients
   let current = opts.value ?? infos[0]?.key ?? 'gray'
   let open = false
@@ -114,6 +116,11 @@ export function createColormapPicker(opts: ColormapPickerOptions): ColormapPicke
     setGradients: (g) => {
       gradients = g
       paintTrigger()
+      if (open) buildOptions()
+    },
+    setInfos: (next) => {
+      infos = next.length ? next : COLORMAP_REGISTRY
+      paintTrigger() // label lookup uses infos
       if (open) buildOptions()
     },
   }

@@ -25,7 +25,7 @@ body {
 .toolbar {
   display: grid; grid-template-rows: auto auto; grid-auto-flow: column;
   justify-content: start; align-items: center; column-gap: var(--sp-6); row-gap: 2px;
-  padding: 3px var(--sp-6); border-bottom: 1px solid var(--border);
+  padding: 5px var(--sp-6); border-bottom: 1px solid var(--border);
   background: linear-gradient(var(--elev), var(--panel)); flex: 0 0 auto;
 }
 .tb-cell { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; flex-wrap: wrap; }
@@ -46,7 +46,7 @@ body {
 .toolbar .slider-num { padding: 0 3px; width: 44px; }
 /* Full-height hairline separating the toolbar into logical clusters (mirrors the info-panel seams).
    Spans both grid rows so it reads as one vertical rule between column groups. */
-.tb-divide { grid-row: 1 / 3; align-self: stretch; width: 1px; background: var(--border); margin: -3px 0; }
+.tb-divide { grid-row: 1 / 3; align-self: stretch; width: 1px; background: var(--border); margin: -5px 0; }
 /* A toolbar cell that spans both rows (e.g. the montage layouts, centred right of vol/surf). */
 .tb-span { grid-row: 1 / 3; align-self: center; }
 .views { display: flex; }
@@ -100,10 +100,10 @@ button { font: inherit; }
 /* Buttons are height-driven (like selects/inputs) with line-height:1, so a button and a same-tier
    select render at exactly --ctl-h and the text sits tight + centered — not inflated by the
    inherited 1.5 line-height. Horizontal padding stays per-button; vertical is owned by height. */
-.ghost { display: inline-flex; align-items: center; justify-content: center; height: var(--ctl-h); line-height: 1; background: transparent; border: 1px solid var(--border-2); color: var(--text); padding: 0 11px; border-radius: var(--r-md); cursor: pointer; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
+.ghost { display: inline-flex; align-items: center; justify-content: center; height: var(--ctl-h); line-height: 1; white-space: nowrap; background: transparent; border: 1px solid var(--border-2); color: var(--text); padding: 0 11px; border-radius: var(--r-md); cursor: pointer; transition: border-color var(--dur) var(--ease), color var(--dur) var(--ease); }
 .ghost:hover { border-color: var(--accent); color: var(--accent-2); }
 /* Primary action (e.g. the toolbar "Dataset" button): a flat amber fill, no gradient/shadow. */
-.primary { display: inline-flex; align-items: center; justify-content: center; height: var(--ctl-h); line-height: 1; background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink); padding: 0 13px; border-radius: var(--r-md); cursor: pointer; font-weight: 600; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
+.primary { display: inline-flex; align-items: center; justify-content: center; height: var(--ctl-h); line-height: 1; white-space: nowrap; flex: 0 0 auto; background: var(--accent); border: 1px solid var(--accent); color: var(--accent-ink); padding: 0 13px; border-radius: var(--r-md); cursor: pointer; font-weight: 600; transition: background var(--dur) var(--ease), border-color var(--dur) var(--ease); }
 .primary:hover { background: var(--accent-2); border-color: var(--accent-2); }
 /* ---------- crafted range slider (replaces the OS-default look) ---------- */
 input[type="range"] {
@@ -196,7 +196,7 @@ input[type="range"]:focus { outline: none; }
 .legend-scroll { position: relative; flex: 1 1 auto; overflow-y: auto; min-height: 0; }
 .legend-rows { position: absolute; top: 0; left: 0; right: 0; will-change: transform; }
 .legend-row {
-  display: grid; grid-template-columns: 14px 14px 38px minmax(0, 1fr); align-items: center; gap: var(--sp-2);
+  display: grid; grid-template-columns: 14px 14px 38px minmax(0, 1fr) auto; align-items: center; gap: var(--sp-2);
   height: var(--ctl-h); width: 100%; padding: 0 4px; background: none; border: 0; color: var(--text);
   text-align: left; cursor: pointer; font: inherit;
 }
@@ -206,6 +206,11 @@ input[type="range"]:focus { outline: none; }
 .legend-swatch { width: 12px; height: 12px; border-radius: var(--r-xs); border: 1px solid rgba(255,240,210,0.15); }
 .legend-id { font-size: var(--fs-sm); color: var(--muted); font-variant-numeric: tabular-nums; }
 .legend-label { font-size: var(--fs-1); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* WM/CSF (negative-id) rows: present in the volume slices but clipped on the surface. */
+.legend-vol-only {
+  font-size: var(--fs-sm); color: var(--muted); text-transform: uppercase; letter-spacing: 0.03em;
+  padding: 0 4px; border: 1px solid rgba(255,240,210,0.15); border-radius: var(--r-xs); line-height: 1.4;
+}
 
 /* Docked category picker: sits at the top of the side panel (no longer a floating overlay). */
 .side-picker { flex: 0 0 auto; }
@@ -232,19 +237,28 @@ input[type="range"]:focus { outline: none; }
   display: grid; min-height: 0;
   grid-template-columns:
     var(--info-c1, 180px)   /* Coordinates */
-    var(--info-c2, 340px)   /* Atlas       */
+    var(--info-c2, 600px)   /* Atlas (1.5× wider) */
     var(--info-c3, 210px)   /* Surface     */
-    var(--info-c4, 350px)   /* Function    */
+    var(--info-c4, 340px)   /* Function    */
     minmax(150px, 1fr);     /* Visual field */
 }
 /* Draggable seam handles floating over the column borders. */
 .info-vresizer { position: absolute; top: 0; bottom: 0; width: 9px; transform: translateX(-50%); z-index: 30; cursor: col-resize; touch-action: none; }
 .info-vresizer::after { content: ''; position: absolute; top: 0; bottom: 0; left: 50%; width: 2px; transform: translateX(-50%); background: transparent; }
 .info-vresizer:hover::after, .info-vresizer:active::after { background: var(--accent); }
-.info-col { background: var(--panel); padding: 12px 16px; overflow: auto; min-width: 0; border-right: 1px solid var(--border); }
+/* Column = a flex box: a fixed (non-scrolling) header + an `.info-scroll` region that owns the
+   overflow. The column itself never scrolls, so the title is structurally outside the scroll flow
+   and stays rock-steady (no sticky re-pin jitter). */
+.info-col { background: var(--panel); display: flex; flex-direction: column; min-height: 0; overflow: hidden; padding: 0; min-width: 0; border-right: 1px solid var(--border); }
 .info-col:last-child { border-right: 0; }
-/* Unified muted small-caps sub-header spec (matches .color-display-head / .group-head). */
-.info-col h3 { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; line-height: 1.2; color: var(--muted); white-space: nowrap; }
+/* The scrolling region under the fixed header — the only part of a column that scrolls. */
+.info-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 16px 12px; }
+/* Unified muted small-caps sub-header spec (matches .color-display-head / .group-head). Fixed
+   (flex-none) header at the top of the column with a --panel background. */
+.info-col > h3 { flex: 0 0 auto; background: var(--panel); margin: 0 0 var(--sp-2); padding: 10px 16px 6px; font-size: var(--fs-sm); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; line-height: 1.2; color: var(--muted); white-space: nowrap; }
+/* Visual-field column: the whole header (title + neighborhood control) is the fixed unit. */
+.info-col > .vf-header { flex: 0 0 auto; background: var(--panel); margin: 0 0 var(--sp-2); padding: 10px 16px 6px; }
+.info-col > .vf-header h3 { margin: 0; padding: 0; background: none; font-size: var(--fs-sm); font-weight: 700; letter-spacing: .06em; text-transform: uppercase; line-height: 1.2; color: var(--muted); white-space: nowrap; }
 
 /* Label:value columns (Coordinates / Surface / Function): a 2-column grid, no truncation. */
 .info-col dl { margin: 0; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 5px 12px; font-size: var(--fs-1); line-height: 1.35; }
@@ -255,7 +269,7 @@ input[type="range"]:focus { outline: none; }
 .info-col dl.dl-paired .dl-span { grid-column: span 3; }
 /* Atlas rows: atlas name · id · region label (gold), zebra-striped. */
 .atlas-report-row {
-  display: grid; grid-template-columns: 82px 46px minmax(120px, 1fr); align-items: baseline; gap: var(--sp-3);
+  display: grid; grid-template-columns: 74px 64px minmax(120px, 1fr); align-items: baseline; gap: var(--sp-3);
   padding: 2px 4px; border-radius: var(--r-xs); font-size: var(--fs-sm);
 }
 .atlas-report-row:nth-child(odd) { background: rgba(255,255,255,.025); }
@@ -263,6 +277,8 @@ input[type="range"]:focus { outline: none; }
 .atlas-report-id { text-align: right; font-variant-numeric: tabular-nums; color: var(--muted); }
 .atlas-report-label { color: var(--label-gold); overflow-wrap: anywhere; }
 .atlas-report-label.unknown { color: var(--muted); }
+/* Short `name`-column label shown before the full name (e.g. "ACgG · anterior cingulate gyrus"). */
+.atlas-report-short { color: var(--muted); font-weight: 600; }
 
 /* Visual field header: title left, neighborhood control right. */
 .vf-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--sp-3); }
@@ -270,7 +286,7 @@ input[type="range"]:focus { outline: none; }
 .neighborhood-control { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: var(--fs-xs); }
 /* Micro-control exception: this tiny 3×3×3 picker stays smaller than --ctl-h. */
 .neighborhood-control select { height: auto; width: 36px; padding: 3px 4px; font-size: var(--fs-xs); }
-.vf-canvas { display: block; width: min(100%, calc(var(--info-height) - 70px)); aspect-ratio: 1; height: auto; margin: 2px auto 0; }
+.vf-canvas { display: block; width: min(100%, calc(var(--info-height) - 60px)); aspect-ratio: 1; height: auto; margin: 2px auto 0; }
 .field.inline { flex-direction: row; align-items: center; gap: 6px; }
 
 .slice-pane, .surface-pane { position: relative; background: #000; min-height: 0; overflow: hidden; }
@@ -376,12 +392,29 @@ input[type="range"]:focus { outline: none; }
 .dialog { background: var(--panel); border: 1px solid var(--border-2); border-radius: var(--r-lg); padding: var(--sp-6); width: min(680px, 92vw); max-height: 88vh; overflow: auto; box-shadow: var(--shadow); }
 .dialog-head { display: flex; align-items: center; gap: var(--sp-4); margin-bottom: var(--sp-5); }
 .dialog-head h2 { margin: 0; font-size: var(--fs-3); }
-.source-list { display: flex; flex-direction: column; gap: var(--sp-2); margin-bottom: var(--sp-6); }
-.source-row { display: flex; align-items: center; gap: var(--sp-4); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); }
+.source-list { margin-bottom: var(--sp-6); }
+/* Datasets render as a single-framed table with subtle zebra rows — quieter than the old
+   per-row bordered boxes. Columns: type badge / derived name / editable custom label / remove. */
+.dataset-table { width: 100%; table-layout: fixed; border-collapse: collapse; border: 1px solid var(--border-2); border-radius: var(--r-sm); overflow: hidden; }
+.dataset-table th { position: relative; text-align: left; font-size: var(--fs-xs); text-transform: uppercase; color: var(--muted); font-weight: 500; padding: var(--sp-2) var(--sp-3); background: var(--panel-2); border-bottom: 1px solid var(--border); }
+.dataset-table td { padding: var(--sp-2) var(--sp-3); vertical-align: middle; }
+.dataset-table tbody tr:nth-child(even) { background: var(--panel-2); }
+.dataset-table .ds-name { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.dataset-table .label-input { width: 100%; }
+.dataset-table .ds-actions { white-space: nowrap; text-align: right; }
+/* Draggable seam on a header cell's right edge — resizes the column to its left (mirrors .info-vresizer). */
+.col-grip { position: absolute; top: 0; right: -4px; width: 9px; height: 100%; cursor: col-resize; touch-action: none; z-index: 1; }
+.col-grip::after { content: ''; position: absolute; right: 4px; top: 0; width: 2px; height: 100%; background: transparent; transition: background var(--dur) var(--ease); }
+.col-grip:hover::after, .col-grip:active::after { background: var(--accent); }
 /* Local and Remote stack as full-width rows (one above the other). */
 .source-forms { display: flex; flex-direction: column; gap: var(--sp-5); }
 .source-form { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-5); }
 .source-form h3 { margin: 0 0 var(--sp-3); font-size: var(--fs-1); text-transform: uppercase; color: var(--muted); }
+/* Remote connection: a "recent" recall row on top, a 2-column field grid, then Connect bottom-right. */
+.conn-recall { margin-bottom: var(--sp-4); }
+.conn-recall > .muted { flex: 0 0 auto; font-size: var(--fs-sm); }
+.port-input { max-width: var(--num-w); }
+.port-field { flex: 0 0 auto; }
 .field { display: flex; flex-direction: column; gap: var(--field-gap); margin-bottom: var(--row-gap); }
 .field > span { font-size: var(--fs-sm); color: var(--muted); }
 .row { display: flex; gap: var(--sp-3); align-items: center; }
@@ -468,6 +501,8 @@ input[type="range"]:focus { outline: none; }
 
 /* ---------- range control ---------- */
 .range-control.is-disabled { opacity: 0.45; pointer-events: none; }
+/* Locked lower bound (continuous atlas): dim + freeze the min side; only the upper bound drags. */
+.range-control.lock-min .range-side:first-child { opacity: 0.45; pointer-events: none; }
 .range-pair { display: flex; gap: var(--sp-3); }
 .range-side { flex: 1 1 0; display: flex; flex-direction: column; gap: var(--field-gap); min-width: 0; }
 .range-cap { font-size: var(--fs-sm); color: var(--muted); display: flex; align-items: center; gap: var(--sp-1); }

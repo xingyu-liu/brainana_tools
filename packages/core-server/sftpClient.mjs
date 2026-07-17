@@ -100,6 +100,15 @@ export class SftpClient {
     }
   }
 
+  // Resolve a path to an absolute one (standard SFTP realpath). Passing '.' returns the login
+  // directory (home) — used as the default start for the pre-add remote folder picker.
+  async realpath(remotePath = '.') {
+    const sftp = this.#require()
+    return new Promise((resolve, reject) => {
+      sftp.realpath(remotePath, (err, abs) => (err ? reject(err) : resolve(abs)))
+    })
+  }
+
   // Download a whole remote file to a local path (used by the cache).
   async fastGet(remotePath, localPath) {
     const sftp = this.#require()

@@ -5,10 +5,16 @@ import { Niivue, NVImage, NVMesh, SLICE_TYPE, MULTIPLANAR_TYPE, SHOW_RENDER, NVM
 import type { RuntimeClient } from '@brainana/core-client/runtimeClient.ts'
 import type { Layout } from '../state/store.ts'
 import { registerColormaps } from './colormaps.ts'
-import { mapFunctionalDisplay } from '../data/functional.ts'
+import { mapFunctionalDisplay, surfaceLutFromColormap, quantizeScalarToBins } from '../data/functional.ts'
 
 // Per-surface render zoom so different geometries fill the pane consistently (v1.2.25 f_).
 const SURFACE_SCALE: Record<string, number> = { pial: 2.15, white: 2.15, smoothwm: 2.15, inflated: 1.45, veryinflated: 1.35, sphere: 1.25 }
+
+// NIfTI codes used to flip an atlas volume into NiiVue's discrete label shader (see #setAtlasVolumeImage).
+const NII_DT_UINT8 = 2 // datatypeCode for 8-bit unsigned integer voxels (continuous-atlas bins)
+const NII_DT_UINT16 = 512 // datatypeCode for 16-bit unsigned integer voxels
+const NII_INTENT_LABEL = 1002 // intent_code NIFTI_INTENT_LABEL — selects the non-interpolating atlas shader
+const ATLAS_LABEL_MAX = 65535 // largest id representable in u16; atlases exceeding it stay on the float path
 
 export interface SurfacePairUrls {
   left: string
@@ -72,6 +78,18 @@ export class MultiView {
   #client: RuntimeClient
   #baseVol: NVImage | null = null
   #atlasVol: NVImage | null = null
+  // Discrete-label-shader state for the atlas volume. NiiVue's generic float shader can't cleanly
+  // hide background (voxel 0) for label maps with >64 ids (an internal 2/256 "opaque floor" bleeds
+  // the first ROI's color over the whole volume). We render eligible atlases through NiiVue's atlas
+  // shader (integer datatype + NIFTI_INTENT_LABEL), which discards id 0 and looks up each id exactly.
+  // #atlasFloat remembers the original float datatype so a forced continuous colormap can restore it.
+  #atlasFloat: { img: ArrayLike<number>; datatypeCode: number; intentCode: number; bitpix: number } | null = null
+  #atlasLabelImg: Uint16Array | null = null
+  // Continuous (float scalar) atlases like CortHierarchy are NOT parcellations: rendered as a
+  // continuous colormap by quantizing values into 256 bins + the discrete label shader (bin 0 =
+  // background, transparent), the SAME quantization the surface uses so the two stay consistent.
+  #atlasContinuous = false
+  #atlasValueRange: { min: number; max: number } = { min: 0, max: 1 }
   #displayMeshes: NVMesh[] = [] // [left, right] currently displayed surface (render instance)
   #refMeshes: NVMesh[] = [] // [left, right] reference surface in WORLD space (not displayed)
   #crosshairCb: ((info: CrosshairInfo) => void) | null = null
@@ -169,6 +187,80 @@ export class MultiView {
     if (this.#atlasVol) this.slices.removeVolume(this.#atlasVol)
     this.slices.addVolume(vol)
     this.#atlasVol = vol
+    this.#prepareAtlasLabelState(vol)
+  }
+
+  // Inspect the loaded atlas once: remember its original float img/datatype (for the ARM float
+  // fallback + continuous quantization source), classify it as continuous (any non-integer voxel)
+  // vs categorical, record the nonzero value range (for the continuous display window), and cache a
+  // u16 id-image for non-negative integer parcellations (the discrete-label-shader categorical path).
+  #prepareAtlasLabelState(vol: NVImage): void {
+    this.#atlasFloat = null
+    this.#atlasLabelImg = null
+    this.#atlasContinuous = false
+    this.#atlasValueRange = { min: 0, max: 1 }
+    const v = vol as unknown as { img?: ArrayLike<number>; hdr?: { datatypeCode: number; intent_code: number; numBitsPerVoxel?: number } }
+    const img = v.img
+    const hdr = v.hdr
+    if (!img || !hdr) return
+    let min = Infinity
+    let max = -Infinity
+    let minNonZero = Infinity
+    let hasNonInteger = false
+    for (let i = 0; i < img.length; i++) {
+      const x = img[i]
+      if (!Number.isFinite(x)) continue
+      if (!Number.isInteger(x)) hasNonInteger = true
+      if (x < min) min = x
+      if (x > max) max = x
+      if (x !== 0 && x < minNonZero) minNonZero = x
+    }
+    if (!Number.isFinite(min)) return // empty/all-non-finite
+    this.#atlasFloat = { img, datatypeCode: hdr.datatypeCode, intentCode: hdr.intent_code, bitpix: hdr.numBitsPerVoxel ?? 64 }
+    this.#atlasContinuous = hasNonInteger
+    // Continuous display window spans the nonzero data (0 is background) so the ramp isn't wasted on
+    // an empty 0..min gap; fall back to [min,max] when every value is 0/nonzero-absent.
+    const lo = Number.isFinite(minNonZero) ? minNonZero : min
+    this.#atlasValueRange = { min: lo, max: max > lo ? max : lo + 1 }
+    // Non-negative integer parcellation → cache the u16 id-image for the discrete categorical path.
+    if (!hasNonInteger && min >= 0 && max <= ATLAS_LABEL_MAX) {
+      this.#atlasLabelImg = img instanceof Uint16Array ? img : Uint16Array.from(img, (x) => Math.round(x))
+    }
+  }
+
+  // Whether the loaded atlas is a continuous scalar map (render with a colormap, not ROI labels).
+  atlasIsContinuous(): boolean {
+    return this.#atlasContinuous
+  }
+
+  // The nonzero value range of the loaded atlas — the display window domain for continuous mode.
+  atlasValueRange(): { min: number; max: number } {
+    return { ...this.#atlasValueRange }
+  }
+
+  // Point the atlas volume at a given image + datatype/intent, so the next updateGLVolume() re-uploads
+  // the 3D texture and re-selects the shader. Used to switch between the categorical id-image (u16 +
+  // LABEL), the continuous bins image (u8 + LABEL), and the ARM float fallback.
+  #setAtlasVolumeImage(img: ArrayLike<number>, datatypeCode: number, bitpix: number, intentCode: number): void {
+    if (!this.#atlasVol) return
+    const v = this.#atlasVol as unknown as { img: ArrayLike<number>; hdr: { datatypeCode: number; intent_code: number; numBitsPerVoxel?: number } }
+    v.img = img
+    v.hdr.datatypeCode = datatypeCode
+    v.hdr.intent_code = intentCode
+    v.hdr.numBitsPerVoxel = bitpix
+  }
+
+  // Unique integer label IDs present in the loaded atlas volume, sorted ascending. Used to render
+  // a categorical label table for atlases that ship no .tsv LUT sidecar (IDs derived from data).
+  atlasLabelIds(): number[] {
+    const img = (this.#atlasVol as unknown as { img?: ArrayLike<number> })?.img
+    if (!img) return []
+    const ids = new Set<number>()
+    for (let i = 0; i < img.length; i++) {
+      const v = Math.round(img[i])
+      if (Number.isFinite(v)) ids.add(v)
+    }
+    return [...ids].sort((a, b) => a - b)
   }
 
   // The flat 256×4 RGBA LUT for a registered colormap (live), or null if unavailable.
@@ -182,21 +274,31 @@ export class MultiView {
     }
   }
 
+  // Categorical parcellation on the volume. Non-negative integer atlases use the discrete label
+  // shader (u16 id-image, background id 0 discarded, ids looked up exactly); atlases with negative
+  // ids (ARM WM/CSF) fall back to the original float image + generic shader, where the transparent
+  // id-0 slot sits mid-LUT clear of NiiVue's opaque floor.
   setAtlasColortable(table: { R: number[]; G: number[]; B: number[]; A: number[]; I: number[]; labels: string[] }): void {
     if (!this.#atlasVol) return
+    if (this.#atlasLabelImg) {
+      this.#setAtlasVolumeImage(this.#atlasLabelImg, NII_DT_UINT16, 16, NII_INTENT_LABEL)
+    } else if (this.#atlasFloat) {
+      this.#setAtlasVolumeImage(this.#atlasFloat.img, this.#atlasFloat.datatypeCode, this.#atlasFloat.bitpix, this.#atlasFloat.intentCode)
+    }
     this.#atlasVol.setColormapLabel(table)
     this.slices.updateGLVolume()
   }
 
-  // Render the atlas volume with a continuous colormap instead of its categorical label table,
-  // spread across the label-id range. Restore the categorical look via setAtlasColortable().
-  setAtlasColormap(name: string): void {
-    if (!this.#atlasVol) return
-    const vol = this.#atlasVol as unknown as { colormapLabel: unknown; cal_min: number; cal_max: number; global_max?: number }
-    vol.colormapLabel = null
-    this.slices.setColormap(this.#atlasVol.id, name)
-    vol.cal_min = 0
-    vol.cal_max = vol.global_max ?? 255
+  // Render the atlas volume with a CONTINUOUS colormap: quantize values over [range] into u8 bins
+  // 1..255 (value 0 / non-finite → bin 0, transparent) and apply a 256-entry ramp LUT via the
+  // discrete label shader (bin 0 discarded). The SAME quantization + LUT feed the surface
+  // (setAtlasSurfaceContinuous), so the slices and the 3D mesh stay pixel-consistent. Works for any
+  // atlas (bins are non-negative). A colormap-only change rebuilds the LUT; a range change re-bins.
+  setAtlasContinuous(cmapLut: ArrayLike<number>, range: { min: number; max: number }): void {
+    if (!this.#atlasVol || !this.#atlasFloat) return
+    const bins = Uint8Array.from(quantizeScalarToBins(this.#atlasFloat.img, range.min, range.max))
+    this.#setAtlasVolumeImage(bins, NII_DT_UINT8, 8, NII_INTENT_LABEL)
+    this.#atlasVol.setColormapLabel(MultiView.#lutToColortable(surfaceLutFromColormap(cmapLut).lut))
     this.slices.updateGLVolume()
   }
 
@@ -348,21 +450,40 @@ export class MultiView {
 
   // Sampling-only atlas volumes for the multi-level Atlas report (loaded but NOT displayed).
   #reportVols = new Map<string, NVImage>()
+  // Whether each report volume is a continuous float map (report the raw value) vs an integer
+  // parcellation (report a rounded label id). Same "any non-integer voxel" rule the display path
+  // uses in #prepareAtlasLabelState.
+  #reportContinuous = new Map<string, boolean>()
 
   async loadReportVolume(key: string, url: string): Promise<void> {
     const vol = await NVImage.loadFromUrl({ url: this.#client.dataUrl(url) })
     this.#reportVols.set(key, vol)
+    this.#reportContinuous.set(key, this.#imgHasNonInteger(vol))
   }
 
   clearReportVolumes(): void {
     this.#reportVols.clear()
+    this.#reportContinuous.clear()
+  }
+
+  // True if any finite voxel is non-integer — i.e. the volume is a continuous scalar map rather
+  // than an integer label parcellation. Mirrors the display-path classification.
+  #imgHasNonInteger(vol: NVImage): boolean {
+    const img = (vol as unknown as { img?: ArrayLike<number> }).img
+    if (!img) return false
+    for (let i = 0; i < img.length; i++) {
+      const x = img[i]
+      if (Number.isFinite(x) && !Number.isInteger(x)) return true
+    }
+    return false
   }
 
   #sampleVolume(vol: NVImage): number | null {
     try {
       const mm = Array.from(this.slices.frac2mm(this.slices.scene.crosshairPos)) as number[]
       const vox = vol.mm2vox([mm[0], mm[1], mm[2]]) as number[]
-      return Math.round(vol.getValue(Math.round(vox[0]), Math.round(vox[1]), Math.round(vox[2])))
+      // Nearest-voxel sample; return the raw value. Callers round to an id only for categorical atlases.
+      return vol.getValue(Math.round(vox[0]), Math.round(vox[1]), Math.round(vox[2]))
     } catch {
       return null
     }
@@ -371,6 +492,11 @@ export class MultiView {
   sampleReportVolume(key: string): number | null {
     const vol = this.#reportVols.get(key)
     return vol ? this.#sampleVolume(vol) : null
+  }
+
+  // Whether a report atlas is a continuous float map (report its value) vs an integer parcellation.
+  reportVolumeContinuous(key: string): boolean {
+    return this.#reportContinuous.get(key) ?? false
   }
 
   // Montage layouts: how the 3 slice planes arrange within the slice instance. The surface pane
@@ -404,15 +530,31 @@ export class MultiView {
   }
 
   #atlasLayerIndex = -1
+  // Cached raw per-vertex .func.gii values of the atlas surface overlay (one Float32Array per hemi)
+  // and a key identifying the loaded pair. A continuous atlas re-quantizes these on colormap/range
+  // change WITHOUT reloading the layer (so no reload race, cf. the func-surface path).
+  #atlasSurfaceRaw: Float32Array[] = []
+  #atlasSurfacePairKey: string | null = null
+  #atlasSurfaceBins = false // true when layer.values hold continuous bins (must be restored for categorical)
 
   // Re-apply a label colortable to a layer AFTER load: NiiVue 0.69 drops the descriptor's
   // colormapLabel (it is processed before layer.global_max settles, collapsing all labels to one
   // colour). setLayerProperty re-runs makeLabelLut with the settled global_max, and requires the
   // colormapLabel key to already exist on the layer (seeded via the load descriptor).
+  //
+  // NiiVue builds the LUT via makeLabelLut(table, 255, layer.global_max), which CLAMPS every
+  // colortable id above global_max down to it. A hemisphere whose per-vertex max value is below the
+  // colortable's max id therefore collapses the higher ids to a single colour — e.g. MacBNA's split
+  // scheme (left ids ≤152, right ids up to 304): the right surface washes to ~one colour. Force each
+  // layer's global_max to span the colortable so BOTH hemispheres get the full LUT (extra, unused
+  // entries on the low-id hemisphere are harmless).
   async #applyLabelLutAt(index: number, table: LabelColortable): Promise<void> {
     if (index < 0) return
     const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
+    const maxId = table.I.length ? Math.max(...table.I) : 0
     for (const mesh of this.#displayMeshes) {
+      const layer = (mesh as unknown as { layers?: Array<{ global_max?: number }> }).layers?.[index]
+      if (layer) layer.global_max = Math.max(layer.global_max ?? 0, maxId)
       await (mesh as unknown as { setLayerProperty: (i: number, k: string, v: unknown, gl: WebGL2RenderingContext) => Promise<void> }).setLayerProperty(index, 'colormapLabel', table, gl).catch(() => {})
     }
   }
@@ -546,35 +688,106 @@ export class MultiView {
 
   // Update the atlas surface layer's colortable in place (ROI toggle) — no mesh reload.
   async updateSurfaceOverlayTable(table: LabelColortable): Promise<void> {
+    // Categorical coloring indexes colormapLabel by the per-vertex value (= label id). If a
+    // continuous colormap previously overwrote layer.values with bins, restore the raw ids first.
+    if (this.#atlasSurfaceBins && this.#atlasLayerIndex >= 0) {
+      const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
+      for (let h = 0; h < 2; h++) {
+        const m = this.#displayMeshes[h] as unknown as { layers?: Array<Record<string, unknown>>; updateMesh?: (gl: WebGL2RenderingContext) => void }
+        const layer = m.layers?.[this.#atlasLayerIndex]
+        if (layer && this.#atlasSurfaceRaw[h]) {
+          layer.values = Float32Array.from(this.#atlasSurfaceRaw[h])
+          m.updateMesh?.(gl)
+        }
+      }
+      this.#atlasSurfaceBins = false
+    }
     await this.#applyOverlayLut(table)
   }
 
-  // Swap the atlas/function overlay layer WITHOUT reloading the base surface meshes, so the
-  // surface never blanks when the overlay changes (Req 7). Removes the current overlay layer in
-  // place, then (if given) adds the new one per hemisphere via NVMesh.loadLayer.
+  // Remove the atlas overlay layer from both hemispheres in place (no base-mesh reload).
+  #removeAtlasSurfaceLayer(): void {
+    if (this.#atlasLayerIndex < 0) return
+    const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
+    for (const mesh of this.#displayMeshes) {
+      const m = mesh as unknown as { layers?: unknown[]; updateMesh?: (gl: WebGL2RenderingContext) => void }
+      if (m.layers && m.layers.length > this.#atlasLayerIndex) m.layers.splice(this.#atlasLayerIndex, 1)
+      m.updateMesh?.(gl)
+    }
+    this.#atlasLayerIndex = -1
+    this.#atlasSurfacePairKey = null
+    this.#atlasSurfaceRaw = []
+    this.#atlasSurfaceBins = false
+  }
+
+  // Ensure the atlas .func.gii overlay layer is loaded for `pair` (append one layer per hemisphere),
+  // caching each hemisphere's RAW per-vertex values before any bins overwrite. Reused for the same
+  // pair (colormap/range/ROI changes don't reload); `seedTable` seeds the layer's colormapLabel key
+  // so the post-load re-apply (global_max workaround) can attach the real LUT.
+  async #ensureAtlasSurfaceLayer(pair: SurfacePairUrls, seedTable: LabelColortable): Promise<boolean> {
+    if (this.#displayMeshes.length < 2) return false
+    const key = `${pair.left}|${pair.right}`
+    if (this.#atlasLayerIndex >= 0 && this.#atlasSurfacePairKey === key) return true
+    this.#removeAtlasSurfaceLayer()
+    const hemis: Array<'left' | 'right'> = ['left', 'right']
+    let idx = -1
+    this.#atlasSurfaceRaw = []
+    for (let i = 0; i < 2; i++) {
+      const mesh = this.#displayMeshes[i]
+      idx = (mesh as unknown as { layers?: unknown[] }).layers?.length ?? 0 // appended layer's index
+      const layer = { ...NVMeshLayerDefaults, url: this.#client.dataUrl(pair[hemis[i]]), colormapLabel: seedTable, opacity: 1, showLegend: false }
+      await (NVMesh as unknown as { loadLayer: (layer: unknown, mesh: NVMesh) => Promise<void> }).loadLayer(layer, mesh)
+      const loaded = (mesh as unknown as { layers?: Array<{ values?: ArrayLike<number> }> }).layers?.[idx]
+      const vals = loaded?.values
+      this.#atlasSurfaceRaw[i] = vals ? Float32Array.from(vals as ArrayLike<number>) : new Float32Array(0)
+    }
+    this.#atlasLayerIndex = idx
+    this.#atlasSurfacePairKey = key
+    this.#atlasSurfaceBins = false // freshly loaded values are the raw .func.gii scalars
+    return true
+  }
+
+  // Swap the atlas overlay layer WITHOUT reloading the base surface meshes, so the surface never
+  // blanks when the overlay changes (Req 7). Categorical path: per-vertex label ids → colormapLabel.
   async setSurfaceOverlay(overlay: SurfaceOverlay | null): Promise<void> {
     if (this.#displayMeshes.length < 2) return
+    if (!overlay) {
+      this.#removeAtlasSurfaceLayer()
+      this.render.drawScene()
+      return
+    }
+    const ok = await this.#ensureAtlasSurfaceLayer(overlay, overlay.table)
+    if (ok) await this.#applyOverlayLut(overlay.table) // re-apply LUT once global_max has settled
+    this.render.drawScene()
+  }
+
+  // Colour the atlas surface with a CONTINUOUS colormap: quantize the cached raw per-vertex values
+  // over [range] into bins 1..255 (value 0 / non-finite → bin 0, transparent) and apply the same
+  // 256-entry ramp LUT the volume uses (setAtlasContinuous). Mirrors setFunctionSurface; reuses the
+  // already-loaded layer on colormap/range changes (no reload).
+  async setAtlasSurfaceContinuous(pair: SurfacePairUrls, cmapLut: ArrayLike<number>, range: { min: number; max: number }, opacity: number): Promise<void> {
+    const table = MultiView.#lutToColortable(surfaceLutFromColormap(cmapLut).lut)
+    const ok = await this.#ensureAtlasSurfaceLayer(pair, table)
+    if (!ok || this.#atlasLayerIndex < 0) return
     const gl = (this.render as unknown as { gl: WebGL2RenderingContext }).gl
-    if (this.#atlasLayerIndex >= 0) {
-      for (const mesh of this.#displayMeshes) {
-        const m = mesh as unknown as { layers?: unknown[]; updateMesh?: (gl: WebGL2RenderingContext) => void }
-        if (m.layers && m.layers.length > this.#atlasLayerIndex) m.layers.splice(this.#atlasLayerIndex, 1)
-        m.updateMesh?.(gl)
-      }
-      this.#atlasLayerIndex = -1
+    for (let h = 0; h < 2; h++) {
+      const mesh = this.#displayMeshes[h]
+      const m = mesh as unknown as { layers?: Array<Record<string, unknown>>; updateMesh?: (gl: WebGL2RenderingContext) => void }
+      const layer = m.layers?.[this.#atlasLayerIndex]
+      if (!layer) continue
+      layer.values = quantizeScalarToBins(this.#atlasSurfaceRaw[h] ?? new Float32Array(0), range.min, range.max)
+      layer.nFrame4D = 1
+      layer.frame4D = 0
+      layer.opacity = opacity
+      layer.global_min = 0
+      layer.global_max = 255
+      layer.cal_min = 0
+      layer.cal_max = 255
+      layer.isTransparentBelowCalMin = false
+      m.updateMesh?.(gl)
     }
-    if (overlay) {
-      const hemis: Array<'left' | 'right'> = ['left', 'right']
-      let idx = -1
-      for (let i = 0; i < this.#displayMeshes.length && i < 2; i++) {
-        const mesh = this.#displayMeshes[i]
-        idx = (mesh as unknown as { layers?: unknown[] }).layers?.length ?? 0 // appended layer's index
-        const layer = { ...NVMeshLayerDefaults, url: this.#client.dataUrl(overlay[hemis[i]]), colormapLabel: overlay.table, opacity: 1, showLegend: false }
-        await (NVMesh as unknown as { loadLayer: (layer: unknown, mesh: NVMesh) => Promise<void> }).loadLayer(layer, mesh)
-      }
-      this.#atlasLayerIndex = idx
-      await this.#applyOverlayLut(overlay.table) // re-apply LUT once global_max has settled
-    }
+    this.#atlasSurfaceBins = true // layer.values now hold quantized bins, not raw ids
+    await this.#applyLabelLutAt(this.#atlasLayerIndex, table)
     this.render.drawScene()
   }
 
@@ -698,6 +911,30 @@ export class MultiView {
       this.render.drawScene()
     } catch {
       // ignore
+    }
+  }
+
+  // Read/restore the surface camera (azimuth/elevation + zoom) so a monkey switch can keep the exact
+  // same view. `scale` is the live zoom (volScaleMultiplier); `baseScale` is the surface-fit scale
+  // that view presets multiply against (Req 9), preserved so presets still reframe correctly after.
+  getCamera(): { azimuth: number; elevation: number; scale: number; baseScale: number } {
+    const s = this.render.scene as unknown as { renderAzimuth?: number; renderElevation?: number; volScaleMultiplier?: number }
+    return {
+      azimuth: s.renderAzimuth ?? 0,
+      elevation: s.renderElevation ?? 0,
+      scale: s.volScaleMultiplier ?? this.#baseScale,
+      baseScale: this.#baseScale,
+    }
+  }
+
+  setCamera(cam: { azimuth: number; elevation: number; scale: number; baseScale: number }): void {
+    this.#baseScale = cam.baseScale
+    try {
+      this.render.scene.volScaleMultiplier = cam.scale
+      this.render.setRenderAzimuthElevation(cam.azimuth, cam.elevation)
+      this.render.drawScene()
+    } catch {
+      // no surface yet
     }
   }
 

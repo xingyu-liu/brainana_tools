@@ -65,7 +65,7 @@ export class SourceRegistry {
   }
 
   list() {
-    return [...this.#sources.values()].map((s) => ({ id: s.id, type: s.type, label: s.label }))
+    return [...this.#sources.values()].map((s) => ({ id: s.id, type: s.type, label: s.label, customLabel: s.customLabel ?? null }))
   }
 
   async remove(id) {

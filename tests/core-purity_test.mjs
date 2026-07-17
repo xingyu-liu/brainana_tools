@@ -9,7 +9,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const SHARED = ['core-server', 'core-launcher', 'core-client', 'ui', 'niivue-kit', 'imaging-math'].map((p) => path.join(root, 'packages', p))
+const SHARED = ['core-server', 'core-launcher', 'core-desktop', 'core-client', 'ui', 'niivue-kit', 'imaging-math'].map((p) => path.join(root, 'packages', p))
 
 // A shared package may not import from apps/, the legacy viewer/ tree, or a *ManifestProvider.
 const FORBIDDEN = [/from\s+['"][^'"]*\/apps\//, /from\s+['"][^'"]*\/viewer\//, /\bimport\s*\(\s*['"][^'"]*\/(apps|viewer)\//, /ManifestProvider\b.*from/]

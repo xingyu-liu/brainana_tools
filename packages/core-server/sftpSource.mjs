@@ -37,7 +37,7 @@ function exists(p) {
 export class SftpDataSource {
   type = 'remote'
 
-  constructor({ id, label, connection, remoteRoot, cacheRoot, manifest } = {}) {
+  constructor({ id, label, customLabel, connection, remoteRoot, cacheRoot, manifest } = {}) {
     if (!connection) throw new Error('SftpDataSource requires connection details')
     if (!remoteRoot) throw new Error('SftpDataSource requires a remoteRoot')
     if (!cacheRoot) throw new Error('SftpDataSource requires a cacheRoot')
@@ -47,6 +47,8 @@ export class SftpDataSource {
     this.id = id
     this.manifest = manifest
     this.label = label || `${connection.username}@${connection.host}:${remoteRoot}`
+    // User-editable display name overriding `label` in pickers when set (null = use `label`).
+    this.customLabel = customLabel ?? null
     this.remoteRoot = String(remoteRoot).replace(/\/+$/, '') || '/'
     this.client = new SftpClient(connection)
     this.mirrorRoot = path.join(cacheRoot, 'mirror')

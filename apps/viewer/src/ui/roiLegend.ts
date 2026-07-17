@@ -101,12 +101,18 @@ export class RoiLegend {
     for (let i = first; i < last; i++) {
       const row = this.#filtered[i]
       const hidden = this.#hidden.has(row.id)
-      const el = h('button', { type: 'button', class: `legend-row${hidden ? ' hidden-roi' : ''}` }, [
+      // Negative-id ROIs (WM/CSF: white matter, ventricles) are drawn in the volume slices but
+      // clipped on the cortical surface (buildLabelColortable's clipNegative). Flag them so the
+      // surface gap is expected rather than read as a color inconsistency with this panel.
+      const volumeOnly = row.id < 0
+      const children = [
         h('span', { class: 'legend-checkbox' }, [hidden ? '' : '✓']),
         h('span', { class: 'legend-swatch' }),
         h('span', { class: 'legend-id' }, [String(row.id)]),
         h('span', { class: 'legend-label' }, [row.label]),
-      ])
+      ]
+      if (volumeOnly) children.push(h('span', { class: 'legend-vol-only', title: 'Shown in the volume only — not on the surface' }, ['vol']))
+      const el = h('button', { type: 'button', class: `legend-row${hidden ? ' hidden-roi' : ''}${volumeOnly ? ' volume-only' : ''}` }, children)
       ;(el.querySelector('.legend-swatch') as HTMLElement).style.background = `rgb(${row.color[0]},${row.color[1]},${row.color[2]})`
       el.dataset.roiId = String(row.id)
       this.#rowsEl.append(el)

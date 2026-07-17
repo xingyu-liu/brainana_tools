@@ -16,8 +16,9 @@ Editor are planned as future `apps/*` reusing the same packages (see
 ## 1. What this tool is
 
 A NiiVue-based desktop viewer for per-subject (`sub-*`) neuroimaging output from the `brainana`
-Nextflow pipeline: multi-planar NIfTI volumes, FreeSurfer/GIFTI cortical surfaces, ARM/D99
-atlases, retinotopy/somatotopy functional maps with F-threshold masking, morphology overlays, a
+Nextflow pipeline: multi-planar NIfTI volumes, FreeSurfer/GIFTI cortical surfaces, categorical and
+continuous atlases (ARM/D99/MacBNA/CortHierarchy/…), retinotopy/somatotopy functional maps with
+F-threshold masking, morphology overlays, a
 yellow surface marker, and per-crosshair coordinate/anatomy/function reports plus a visual-field
 plot.
 
@@ -26,6 +27,10 @@ registry of *data sources*; the user adds a **local folder** and/or a **remote w
 SSH/SFTP)** in-app, and can hold subjects from several sources at once without relaunching. It
 targets **macOS, Linux, and Windows** on evergreen desktop browsers, with **WebGL2** as the one
 hard requirement (gated at runtime with a friendly message).
+
+The **same code** also ships as a **native standalone desktop app** (Electron), which bundles its own
+Chromium (uniform WebGL2) and runs the server in-process — no external browser required. Desktop and
+browser modes share one bootstrap; see [desktop-app.md](desktop-app.md).
 
 ## 2. Design principles in force
 
@@ -61,16 +66,17 @@ Tool-agnostic shared **`packages/*`** consumed by per-tool **`apps/*`** (today: 
 | Data sources | `packages/core-server/{dataSource,localSource,sftpSource,sftpClient,cache}.mjs` | `DataSource` contract + registry; local FS source; non-blocking `ssh2`/SFTP source; async remote cache. Local/SFTP sources take an injected `manifest` provider (required). |
 | Export | `packages/core-server/export.mjs` | Atomic server-side write (temp + rename) |
 | Server CLI + version + paths | `packages/core-server/{main.mjs,version.mjs,paths.mjs}` | Generic `runServerCli(options)`; generated version (gitignored); per-OS cache paths (`paths.mjs` lives here to keep the package graph acyclic) |
-| Launcher | `packages/core-launcher/launch.mjs` | Generic `launch(options)`: free port + retry, token, start server, open browser |
+| Launcher | `packages/core-launcher/launch.mjs` | Generic `bootServer(options)` (shared core: free port + retry, token, start server) and `launch(options)` (adds open-browser + signal handlers) |
+| Desktop shell | `packages/core-desktop/{main.mjs,window.mjs}` | Tool-agnostic Electron main process: `runDesktop(options)` calls `bootServer`, then loads the loopback URL in a hardened `BrowserWindow` (Chromium ⇒ reliable WebGL2). Domain-free; see [desktop-app.md](desktop-app.md) |
 | Client platform | `packages/core-client/*.ts` | `runtimeClient` (token → authed fetch), `sourceManager`, `filesystemClient`, `sessionPersistence`, `exportDestination`, `browserCapabilities` |
 | Shared UI | `packages/ui/` | Design-token theme (`theme.css` + self-hosted `fonts/`), `h()` DOM helper, generic components (`colorbar`, `slider`, `rangeControl`, `legend`) |
 | NiiVue kit | `packages/niivue-kit/` | Generic NiiVue helpers: `orientation.ts` (gizmo), `marker.ts` (landmark/crosshair) |
 | Imaging math | `packages/imaging-math/` | Pure, headless math: `roiWarp.ts`, `projection.ts` (rigid/landmark/coordinate land here) |
 | Viewer domain (server) | `apps/viewer/server/{manifest.mjs,freesurfer.mjs}` | Manifest + template discovery (exports `viewerManifestProvider`); FreeSurfer binary parse, GIFTI shape, adaptive hemisphere spacing |
 | Viewer SPA | `apps/viewer/src/` | WebGL2 gate, source chooser, NiiVue rendering (`niivue/multiView.ts`), panels, unified color display, reports, visual-field plot; colormap catalog + colormap-coupled components (deferred, not yet generic) |
-| Viewer entries | `apps/viewer/{launch.mjs,server.mjs}` | Composition roots: inject `viewerManifestProvider` + Viewer identity into the generic launcher / server CLI |
-| Build/test | `package.json` (root scripts + `workspaces`), `apps/*/package.json`, `tsconfig{,.base}.json`, `apps/viewer/vite.config.ts`, `scripts/generate-version.mjs`, `scripts/run-tests.mjs`, `.github/workflows/ci.yml` | Workspace build, per-app version generation, workspace-aware headless tests, CI matrix |
-| Build output | `apps/*/dist/` | Vite build output — **gitignored** |
+| Viewer entries | `apps/viewer/{launch.mjs,server.mjs,desktop.mjs}` | Composition roots: inject `viewerManifestProvider` + Viewer identity into the generic launcher (browser) / server CLI (headless) / desktop shell (Electron) |
+| Build/test | `package.json` (root scripts + `workspaces`), `apps/*/package.json`, `tsconfig{,.base}.json`, `apps/viewer/vite.config.ts`, `apps/viewer/electron-builder.yml`, `scripts/generate-version.mjs`, `scripts/run-tests.mjs`, `.github/workflows/ci.yml` | Workspace build, desktop packaging config, per-app version generation, workspace-aware headless tests, CI matrix |
+| Build output | `apps/*/dist/` (Vite SPA), `apps/*/release/` (electron-builder installers) | Build output — **gitignored** |
 
 ## 4. How it works
 
@@ -85,6 +91,12 @@ Tool-agnostic shared **`packages/*`** consumed by per-tool **`apps/*`** (today: 
   data-management endpoints are `/api/sources/:id/{monkeys,manifest,directories,import-files,save-list,save-mkdir,save-file}`.
   The `<sourceId>` route pattern is built from a single `SOURCE_ID_PATTERN` exported by
   `dataSource.mjs`, so routing can never drift from the id generator.
+- **Registry + pre-add routes.** Beyond the scoped `:id/<action>` routes: `GET /api/runtime`
+  (runtime + capabilities + sources), `GET/POST /api/sources`, `PATCH /api/sources/:id` (rename a
+  source's `customLabel`), `DELETE /api/sources/:id`, and the pre-add folder pickers
+  `GET /api/fs/browse` (local) and `POST /api/remote/connect` · `GET /api/remote/browse` ·
+  `POST /api/remote/disconnect` (a transient SSH/SFTP browse session; the password is sent once and
+  never persisted).
 - **File serving** honors HTTP **range** requests (clamped to file size), preserves the real
   filename extension in the URL, and uses extension-driven content types. The source read stream is
   **released as soon as the client disconnects**, so NiiVue's many aborted range requests do not
@@ -116,11 +128,17 @@ A `DataSource` is the uniform interface the runtime talks to: `listMonkeys`, `bu
 
 ### 4.3 Viewer domain — server (`apps/viewer/server/`)
 - **`manifest.mjs`** (`buildManifest`): regex-matches BIDS-ish filenames per subject to locate
-  anatomy, ARM1–6 + D99 atlases, retinotopy/somatotopy 4D maps (with frame indices), transforms,
-  surfaces, and morphology; emits JSON of source-scoped URLs. `fileUrl` is **injected by the data
-  source** so the manifest stays URL-scheme-agnostic. The anat and fastsurfer directories are
-  resolved **flexibly**: a subject may store anat flat (`sub-*/anat`) or under a BIDS session
-  (`sub-*/ses-*/anat`), and fastsurfer output may be keyed by subject or subject+session.
+  anatomy, atlases (**generic discovery** of every `atlas-<name>_space-*.nii.gz` in the chosen
+  space dir — e.g. ARM1–6, D99, MacBNA, CortHierarchy, FuncNetwork — emitted as a flat `atlases`
+  array, ARM ordered numerically first), retinotopy/somatotopy 4D maps (with frame indices),
+  transforms, surfaces, and morphology; emits JSON of source-scoped URLs. `fileUrl` is **injected
+  by the data source** so the manifest stays URL-scheme-agnostic. The anat and fastsurfer
+  directories are resolved **flexibly**: a subject may store anat flat (`sub-*/anat`) or under a
+  BIDS session (`sub-*/ses-*/anat`), and fastsurfer output may be keyed by subject or
+  subject+session. The atlas **space** is chosen once per subject
+  (`atlas_space-fsnative` → `atlas_space-T1w` → `atlas_space-scanner`, first with an atlas volume);
+  all volume-side assets come from that single dir while surface `.func.gii` overlays are always
+  fsnative (see `data-contract.md`).
 - **`freesurfer.mjs`** (`ensureDerivedAssets`): parses **FreeSurfer binary** surfaces/morphology in
   Node, writes GIFTI `.shape.gii`, and computes **adaptive per-subject hemisphere spacing** for
   inflated/veryinflated/sphere. Cached under `<root>/.brainana-viewer-cache/`, mtime-invalidated.
@@ -129,16 +147,21 @@ A `DataSource` is the uniform interface the runtime talks to: `listMonkeys`, `bu
 - **Bootstrap** (`main.ts`): gates on **WebGL2** (`browserCapabilities`) — an unsupported browser
   gets a friendly message; otherwise it mounts the single-screen dashboard.
 - **Source chooser** (`ui/dialogs/sources.ts`): add a local folder or a remote SSH/SFTP workstation
-  and browse each source's subjects with a manifest summary, no relaunch. Each loaded subject stays
-  tagged with its `sourceId`; several sources coexist.
+  and browse each source's subjects with a manifest summary, no relaunch. A pre-add folder picker
+  browses local or (over a transient connection) remote directories; saved connection profiles
+  (host/port/user, no passwords) and per-source editable custom labels are supported. Each loaded
+  subject stays tagged with its `sourceId`; several sources coexist.
 - **Rendering** (`niivue/multiView.ts`): a `MultiView` holds **two** NiiVue instances — a
   multiplanar **slice montage** and a 3D **surface render** — with manual crosshair coupling between
-  them. The base volume, colored **atlas overlay**, and **functional 4D overlay** (with F-threshold
+  them. The base volume, the **atlas overlay** (categorical parcellations via the discrete label
+  shader, or continuous float-scalar atlases quantized into 256 colormap bins), and the
+  **functional 4D overlay** (with F-threshold
   masking) live on the slices; cortical **surfaces**, **morphology shading** (curvature
   binary/continuous · sulc · thickness), the precomputed **atlas/function surface layer**, and the
   draggable **yellow marker** live on the render. Custom retinotopy/somatotopy/curvature LUTs are
   registered on both instances.
-- **Panels & controls** (`ui/`): atlas (ARM1–6 + D99), morphology, and function pickers; a unified
+- **Panels & controls** (`ui/`): atlas (generic — every atlas in the manifest, including continuous
+  float-scalar atlases such as CortHierarchy rendered via a colormap), morphology, and function pickers; a unified
   **Color display** section (colormap picker, legend, display range, clip) that targets whichever
   overlay is active; per-crosshair coordinate/anatomy/function reports; a **visual-field plot**;
   arrow-key crosshair nudging; layout presets and camera view presets.
@@ -191,16 +214,21 @@ required (the unit tests import `.ts` sources directly, relying on Node's type s
 **Implemented and verified:** the full core platform (runtime, security, the DataSource registry
 with local + remote sources, async cache, atomic export, launcher, version generation), the
 Viewer-domain manifest/FreeSurfer code, the client platform layer + in-app multi-source chooser, and
-a substantial NiiVue frontend (dual-instance rendering, surfaces, ARM/D99 atlases,
-retinotopy/somatotopy with F-threshold masking, morphology shading, yellow-marker modes, the unified
+a substantial NiiVue frontend (dual-instance rendering, surfaces, generic categorical + continuous
+atlas overlays, retinotopy/somatotopy with F-threshold masking, morphology shading, yellow-marker modes, the unified
 color-display section, crosshair reports, and the visual-field plot). A headless test suite covers
 the server (bind + token rejection, ranged fetch, local + fake-SFTP round-trips) and the pure
 domain math (atlas/colormap/functional/gifti/projection/range/roiWarp/visualfield), run across a
 CI matrix (macOS/Linux/Windows).
 
+**Desktop packaging (Electron):** the native standalone app is built and verified end-to-end — the
+tool-agnostic `core-desktop` shell, the `apps/viewer/desktop.mjs` entry, and `electron-builder.yml`
+producing per-OS artifacts (the packaged binary boots the loopback server and resolves all bundled
+`@brainana/*` imports). See [desktop-app.md](desktop-app.md). Remaining: a GitHub Actions release
+matrix to build all three OSes on a tag, and code signing/notarization for wider distribution.
+
 **Not yet wired:** imported-volume surface projection and ROI generation (implemented + unit-tested,
-no UI entry point yet), snapshot/state/ZIP export, per-OS packaging/signing, and the full
-browser-compat test matrix.
+no UI entry point yet), snapshot/state/ZIP export, and the full browser-compat test matrix.
 
 Design strengths carried by the current route:
 - Dependency-light server with correct **range** support and **extension-preserving** file URLs.

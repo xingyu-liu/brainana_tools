@@ -16,6 +16,7 @@ import crypto from 'node:crypto'
 import { SourceRegistry, SOURCE_ID_PATTERN } from './dataSource.mjs'
 import { LocalDataSource } from './localSource.mjs'
 import { SftpDataSource } from './sftpSource.mjs'
+import { SftpClient } from './sftpClient.mjs'
 import { createTokenGuard, isWithin, TOKEN_COOKIE } from './security.mjs'
 import { versionInfo } from './version.mjs'
 
@@ -110,6 +111,31 @@ export function createServer({ token = null, distRoot = null, initialSources = [
   // core is tool-agnostic; the real per-OS cache dir is passed in by the app's launcher.
   const serverCacheRoot = cacheRoot || path.join(os.tmpdir(), 'brainana-cache')
 
+  // Pre-add remote connections held open between a /api/remote/connect and the subsequent
+  // /api/remote/browse calls, so the SFTP handshake is paid once per browse session (not per click).
+  // token -> { client, lastUsed }. Cleaned up on disconnect, on idle timeout, and on server close.
+  // These are the viewer server's own sockets — unrelated to any pipeline process/scratch cleanup.
+  const remoteBrowsers = new Map()
+  const REMOTE_BROWSE_TTL_MS = 10 * 60 * 1000
+  const sweepRemoteBrowsers = () => {
+    const now = Date.now()
+    for (const [tok, entry] of remoteBrowsers) {
+      if (now - entry.lastUsed > REMOTE_BROWSE_TTL_MS) {
+        remoteBrowsers.delete(tok)
+        entry.client.close().catch(() => {})
+      }
+    }
+  }
+  // List directories under an absolute remote path, mirroring browseDir's shape for the shared picker.
+  async function remoteListing(client, absPath) {
+    const entries = (await client.list(absPath))
+      .filter((e) => e.type === 'directory' && !e.name.startsWith('.'))
+      .map((e) => ({ name: e.name, path: path.posix.join(absPath, e.name), isDir: true }))
+      .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }))
+    const parent = path.posix.dirname(absPath)
+    return { path: absPath, parent: parent === absPath ? null : parent, entries }
+  }
+
   // Open any startup sources synchronously enough that /api/sources reflects them.
   // A source that fails to open is logged and skipped — one bad startup source must not
   // reject `ready` and 500 every subsequent request.
@@ -126,7 +152,7 @@ export function createServer({ token = null, distRoot = null, initialSources = [
 
   async function openSource(spec) {
     if (spec.type === 'local') {
-      return new LocalDataSource({ root: spec.path, label: spec.label, manifest: manifestProvider })
+      return new LocalDataSource({ root: spec.path, label: spec.label, customLabel: spec.customLabel, manifest: manifestProvider })
     }
     if (spec.type === 'remote') {
       // Default a per-source cache dir under the server cache root when unspecified,
@@ -135,6 +161,7 @@ export function createServer({ token = null, distRoot = null, initialSources = [
       const resolvedCacheRoot = spec.cacheRoot || path.join(serverCacheRoot, 'remote', digest)
       const source = new SftpDataSource({
         label: spec.label,
+        customLabel: spec.customLabel,
         connection: spec.connection,
         remoteRoot: spec.remoteRoot,
         cacheRoot: resolvedCacheRoot,
@@ -253,6 +280,47 @@ export function createServer({ token = null, distRoot = null, initialSources = [
         }
       }
 
+      // ---- Remote browse: connect once, then list arbitrary remote directories before adding the
+      // source (the SftpDataSource is locked to a fixed remoteRoot and cannot browse above it).
+      // Same loopback bind + token guard as every other /api route; passwords are never stored. ----
+      if (pathname === '/api/remote/connect' && req.method === 'POST') {
+        sweepRemoteBrowsers()
+        let client
+        try {
+          const { connection } = await jsonBody(req)
+          client = new SftpClient(connection)
+          await client.connect()
+          const token = `remote-${crypto.randomBytes(9).toString('hex')}`
+          remoteBrowsers.set(token, { client, lastUsed: Date.now() })
+          return sendJson(res, 200, { token })
+        } catch (error) {
+          if (client) client.close().catch(() => {})
+          return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      if (pathname === '/api/remote/browse' && req.method === 'GET') {
+        sweepRemoteBrowsers()
+        const entry = remoteBrowsers.get(url.searchParams.get('token') || '')
+        if (!entry) return sendJson(res, 404, { error: 'Not connected (session expired). Reconnect and try again.' })
+        entry.lastUsed = Date.now()
+        try {
+          const requested = url.searchParams.get('path') || ''
+          const abs = requested || (await entry.client.realpath('.').catch(() => '/'))
+          return sendJson(res, 200, await remoteListing(entry.client, abs))
+        } catch (error) {
+          return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      if (pathname === '/api/remote/disconnect' && req.method === 'POST') {
+        const { token } = await jsonBody(req).catch(() => ({}))
+        const entry = token && remoteBrowsers.get(token)
+        if (entry) {
+          remoteBrowsers.delete(token)
+          entry.client.close().catch(() => {})
+        }
+        return sendJson(res, 200, { ok: true })
+      }
+
       // ---- Source registry ----
       if (pathname === '/api/sources' && req.method === 'GET') return sendJson(res, 200, registry.list())
       if (pathname === '/api/sources' && req.method === 'POST') {
@@ -260,7 +328,22 @@ export function createServer({ token = null, distRoot = null, initialSources = [
           const spec = await jsonBody(req)
           const source = await openSource(spec)
           registry.add(source, { type: source.type })
-          return sendJson(res, 200, { id: source.id, type: source.type, label: source.label })
+          return sendJson(res, 200, { id: source.id, type: source.type, label: source.label, customLabel: source.customLabel ?? null })
+        } catch (error) {
+          return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
+        }
+      }
+      // Rename a source's display label (RAM-only). Matched before the scoped `:id/<action>`
+      // routes below because a bare `/api/sources/:id` has no trailing action segment.
+      if (pathname.startsWith('/api/sources/') && !pathname.slice('/api/sources/'.length).includes('/') && req.method === 'PATCH') {
+        const id = decodeURIComponent(pathname.slice('/api/sources/'.length))
+        const source = registry.get(id)
+        if (!source) return sendJson(res, 404, { error: 'Source not found' })
+        try {
+          const body = await jsonBody(req)
+          const trimmed = typeof body.customLabel === 'string' ? body.customLabel.trim() : ''
+          source.customLabel = trimmed || null
+          return sendJson(res, 200, { id: source.id, type: source.type, label: source.label, customLabel: source.customLabel })
         } catch (error) {
           return sendJson(res, 400, { error: error instanceof Error ? error.message : String(error) })
         }
@@ -328,6 +411,10 @@ export function createServer({ token = null, distRoot = null, initialSources = [
   // Expose the registry + a graceful close for tests and the launcher.
   server.on('close', () => {
     registry.closeAll().catch(() => {})
+    for (const [tok, entry] of remoteBrowsers) {
+      remoteBrowsers.delete(tok)
+      entry.client.close().catch(() => {})
+    }
   })
   return { server, registry, ready, openSource }
 }

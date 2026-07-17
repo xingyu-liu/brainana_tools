@@ -53,17 +53,21 @@ export function drawVisualField(canvas: HTMLCanvasElement, points: VfPoint[], st
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, size, size)
 
-  // Label-aware layout: keep the anatomical side labels fully inside the canvas; a slight leftward
-  // center bias gives the longer "Right" label equal breathing room.
+  // Label-aware layout: grow the rings until a label would leave the canvas, on whichever axis
+  // binds first. Horizontal is squeezed by the "Left"/"Right" text widths; vertical by the
+  // "Upper"/"Lower" cardinals. A slight leftward center bias gives the wider "Right" label room.
   ctx.font = `600 13px ${t.font}`
   const leftW = ctx.measureText('Left').width
   const rightW = ctx.measureText('Right').width
-  const sideGap = 7
-  const edgePad = 4
+  const sideGap = 3
+  const edgePad = 2
+  const topPad = 17 // "Upper" ascent + gap above the ring
+  const botPad = 19 // "Lower" descent + gap below the ring
   const cx = size / 2 - Math.max(0, (rightW - leftW) / 4)
   const cy = size / 2
   const hRadius = Math.min(cx - leftW - sideGap - edgePad, size - cx - rightW - sideGap - edgePad)
-  const radius = Math.max(20, Math.min(size * 0.44, hRadius))
+  const vRadius = Math.min(cy - topPad, size - cy - botPad)
+  const radius = Math.max(20, Math.min(hRadius, vRadius))
   const pxPerDeg = radius / ECC_MAX
   const toPx = (x: number, y: number): [number, number] => [cx + x * pxPerDeg, cy - y * pxPerDeg]
 
@@ -94,9 +98,9 @@ export function drawVisualField(canvas: HTMLCanvasElement, points: VfPoint[], st
   ctx.fillText('Upper', cx, cy - radius - 7)
   ctx.fillText('Lower', cx, cy + radius + 16)
   ctx.textAlign = 'right'
-  ctx.fillText('Left', cx - radius - 8, cy + 4)
+  ctx.fillText('Left', cx - radius - 4, cy + 4)
   ctx.textAlign = 'left'
-  ctx.fillText('Right', cx + radius + 8, cy + 4)
+  ctx.fillText('Right', cx + radius + 4, cy + 4)
 
   // degree labels along the upper vertical meridian
   ctx.fillStyle = rgba(t.text, 0.85)

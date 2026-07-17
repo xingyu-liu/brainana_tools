@@ -23,14 +23,34 @@ const ANAT_BYTES = Buffer.from('BRAINANA-FIXTURE-VOLUME-0123456789', 'utf8')
 
 async function buildFixture() {
   const root = await fsp.mkdtemp(path.join(os.tmpdir(), 'brainana-fixture-'))
-  // flat: sub-flat/anat/...
+  const write = async (dir, name) => {
+    await fsp.mkdir(dir, { recursive: true })
+    await fsp.writeFile(path.join(dir, name), ANAT_BYTES)
+  }
+  // flat: sub-flat/anat/... — has BOTH an fsnative atlas dir (with volumes) and a T1w one, so the
+  // single-dir selection must pick fsnative for every volume-side asset (volume + LUT + retino/somato).
   const flatAnat = path.join(root, 'sub-flat', 'anat')
-  await fsp.mkdir(flatAnat, { recursive: true })
-  await fsp.writeFile(path.join(flatAnat, 'sub-flat_space-T1w_desc-preproc_T1w.nii.gz'), ANAT_BYTES)
-  // session: sub-ses/ses-001/anat/...
+  await write(flatAnat, 'sub-flat_space-T1w_desc-preproc_T1w.nii.gz')
+  const flatFsnative = path.join(flatAnat, 'atlas_space-fsnative')
+  await write(flatFsnative, 'atlas-ARM1_space-fsnative_sub-flat.nii.gz')
+  await write(flatFsnative, 'atlas-ARM1.tsv')
+  await write(flatFsnative, 'atlas-ARM1_space-fsnative_hemi-L_sub-flat.func.gii')
+  await write(flatFsnative, 'atlas-ARM1_space-fsnative_hemi-R_sub-flat.func.gii')
+  await write(flatFsnative, 'atlas-retinotopy_space-fsnative_sub-flat.nii.gz')
+  await write(flatFsnative, 'atlas-somatotopy_space-fsnative_sub-flat.nii.gz')
+  const flatT1w = path.join(flatAnat, 'atlas_space-T1w') // present but must LOSE to fsnative
+  await write(flatT1w, 'atlas-ARM1_space-T1w_sub-flat.nii.gz')
+  await write(flatT1w, 'atlas-ARM1.tsv')
+  // session: sub-ses/ses-001/anat/... — NO fsnative atlas VOLUMES (only surface .func.gii), so the
+  // chosen volume dir falls back to T1w, yet the atlas surface overlay still resolves from fsnative.
   const sesAnat = path.join(root, 'sub-ses', 'ses-001', 'anat')
-  await fsp.mkdir(sesAnat, { recursive: true })
-  await fsp.writeFile(path.join(sesAnat, 'sub-ses_ses-001_space-T1w_desc-preproc_T1w.nii.gz'), ANAT_BYTES)
+  await write(sesAnat, 'sub-ses_ses-001_space-T1w_desc-preproc_T1w.nii.gz')
+  const sesT1w = path.join(sesAnat, 'atlas_space-T1w')
+  await write(sesT1w, 'atlas-ARM1_space-T1w_sub-ses_ses-001.nii.gz')
+  await write(sesT1w, 'atlas-ARM1.tsv')
+  const sesFsnative = path.join(sesAnat, 'atlas_space-fsnative') // func.gii only, no volume
+  await write(sesFsnative, 'atlas-ARM1_space-fsnative_hemi-L_sub-ses_ses-001.func.gii')
+  await write(sesFsnative, 'atlas-ARM1_space-fsnative_hemi-R_sub-ses_ses-001.func.gii')
   // a non-subject dir to confirm filtering
   await fsp.mkdir(path.join(root, 'logs'), { recursive: true })
   return root
@@ -80,6 +100,31 @@ async function main() {
       assert.equal(manifest.capabilities.volume, true)
     }
     ok('buildManifest returns source-scoped anatomy URL for flat + session layouts')
+
+    // --- single atlas space directory: fsnative wins, everything volume-side from that one dir ---
+    const flatM = await (await fetch(`${base}/api/sources/${source.id}/manifest/sub-flat`, { headers: auth })).json()
+    const arm = flatM.atlases.find((a) => a.name === 'ARM1')
+    assert.ok(arm, 'sub-flat lists the ARM1 atlas')
+    assert.match(arm.volume, /atlas_space-fsnative\/atlas-ARM1_space-fsnative_/, 'atlas volume comes from the fsnative dir, not T1w')
+    assert.match(arm.labels, /atlas_space-fsnative\/atlas-ARM1\.tsv$/, 'atlas LUT comes from the same chosen (fsnative) dir')
+    assert.ok(arm.surface && arm.surface.left && arm.surface.right, 'atlas surface pair resolved from fsnative func.gii')
+    assert.match(flatM.function.retinotopy.combined, /atlas_space-fsnative\/atlas-retinotopy_space-fsnative_/, 'retinotopy volume from fsnative dir')
+    assert.deepEqual(flatM.function.retinotopy.frames, { polar: 0, polarF: 1, eccentricity: 2, eccentricityF: 3 }, 'retinotopy frame map intact')
+    assert.match(flatM.function.somatotopy.combined, /atlas_space-fsnative\/atlas-somatotopy_space-fsnative_/, 'somatotopy volume from fsnative dir')
+    assert.deepEqual(flatM.function.somatotopy.frames, { phase: 0, fstat: 1 }, 'somatotopy frame map intact')
+    assert.equal(flatM.capabilities.atlases, true)
+    assert.equal(flatM.capabilities.retinotopy, true)
+    assert.equal(flatM.capabilities.somatotopy, true)
+    ok('fsnative dir wins; atlas volume + LUT + retino/somato all sourced from it')
+
+    // --- T1w fallback when fsnative has no atlas VOLUME, but surface stays fsnative ---
+    const sesM = await (await fetch(`${base}/api/sources/${source.id}/manifest/sub-ses`, { headers: auth })).json()
+    const sesArm = sesM.atlases.find((a) => a.name === 'ARM1')
+    assert.ok(sesArm, 'sub-ses lists the ARM1 atlas')
+    assert.match(sesArm.volume, /atlas_space-T1w\/atlas-ARM1_space-T1w_/, 'atlas volume falls back to the T1w dir')
+    assert.match(sesArm.labels, /atlas_space-T1w\/atlas-ARM1\.tsv$/, 'atlas LUT from the same chosen (T1w) dir')
+    assert.ok(sesArm.surface && sesArm.surface.left && sesArm.surface.right, 'surface still resolves from fsnative func.gii despite T1w volume')
+    ok('T1w volume fallback keeps fsnative-only surface overlay')
 
     // --- ranged byte fetch of the anatomy volume ---
     const flatManifest = await (await fetch(`${base}/api/sources/${source.id}/manifest/sub-flat`, { headers: auth })).json()

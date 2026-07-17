@@ -18,7 +18,14 @@ export interface MorphologyPanel {
   element: HTMLElement
 }
 
-export function createMorphologyPanel(cb: MorphologyPanelCallbacks): MorphologyPanel {
+// Restored shading state carried across a monkey switch, so the pickers reflect the preserved
+// metric/style instead of resetting to curvature · binary.
+export interface MorphologyPanelInitial {
+  metric?: MorphologyDisplayMetric
+  style?: CurvatureStyle
+}
+
+export function createMorphologyPanel(cb: MorphologyPanelCallbacks, initial: MorphologyPanelInitial = {}): MorphologyPanel {
   const metricOptions: SelectOption[] = [
     { value: 'curvature', label: 'curvature' },
     { value: 'sulc', label: 'sulcal depth' },
@@ -44,9 +51,12 @@ export function createMorphologyPanel(cb: MorphologyPanelCallbacks): MorphologyP
     stylePicker.element,
   ])
 
-  // Initial active states (curvature · binary).
-  metricPicker.setValue('curvature')
-  stylePicker.setValue('binary')
+  // Initial active states (curvature · binary by default; overridden by a restored snapshot).
+  const metric = initial.metric ?? 'curvature'
+  const style = initial.style ?? 'binary'
+  metricPicker.setValue(metric)
+  stylePicker.setValue(style)
+  styleField.element.hidden = metric !== 'curvature'
 
   return {
     element,

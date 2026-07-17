@@ -1,12 +1,12 @@
 // Procedural ROI colors — deterministic from the label ID (golden-angle HSL), matching
 // v1.2.25 so the same color feeds the volume overlay, the surface projection, and the legend
-// swatch. Regions WM/CSF get fixed tissue colors. Seed 0 for ARM, 211 for D99.
+// swatch. Regions WM/CSF get fixed tissue colors. A single default seed is used for every atlas
+// (no per-atlas special-casing).
 // Reverse-engineered constants: hue=(id·137.508+seed)%360, sat=62+id%3·8, light=49+id%4·5.
 
 export type RGB = [number, number, number]
 
 export const ARM_SEED = 0
-export const D99_SEED = 211
 const WM_COLOR: RGB = [205, 205, 205]
 const CSF_COLOR: RGB = [105, 190, 245]
 

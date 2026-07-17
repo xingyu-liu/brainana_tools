@@ -26,8 +26,12 @@ export interface ColorDisplayTarget {
   displayDomain: { min: number; max: number }
   displayRange: { min: number; max: number }
   displaySymmetric?: boolean
-  /** Hide the display-range slider (e.g. atlas, where the map spreads across label ids). */
+  /** Hide the display-range slider (e.g. categorical atlas, where the map spreads across label ids). */
   showDisplayRange?: boolean
+  /** Pin the display-range lower bound so only the upper bound drags (continuous atlas). */
+  lockMin?: boolean
+  /** Override the colormaps offered by the picker (e.g. drop "labels" for a continuous atlas). */
+  colormaps?: ColormapInfo[]
   /** Clip UI variant: a full lo/hi range, or none. */
   clip: 'range' | 'none'
   clipDomain?: { min: number; max: number }
@@ -35,6 +39,12 @@ export interface ColorDisplayTarget {
   unit?: string
   /** Bar-legend semantic tick labels [min, mid, max] (e.g. somatotopy's foot / hand / face). */
   barTicks?: [string, string, string]
+  /**
+   * Default collapsed state, applied only when the target *identity* (title) changes — e.g. a
+   * categorical atlas starts collapsed since the ROI list above already shows the real palette,
+   * yet a manual expand persists across the frequent same-target refreshes.
+   */
+  collapsed?: boolean
 }
 
 export interface ColorDisplay {
@@ -90,14 +100,24 @@ export function createColorDisplay(
   // Clicking the header collapses/expands the body (keeps a short window usable).
   head.addEventListener('click', () => element.classList.toggle('collapsed'))
 
+  // Apply a target's default collapsed state only when the target identity changes, so a manual
+  // expand/collapse survives the many same-target refreshColorDisplay() re-renders.
+  let lastTitle: string | null = null
+
   return {
     element,
     setTarget: (t) => {
       if (!t) {
         element.hidden = true
+        lastTitle = null
         return
       }
       element.hidden = false
+      if (t.title !== lastTitle) {
+        element.classList.toggle('collapsed', !!t.collapsed)
+        lastTitle = t.title
+      }
+      if (t.colormaps) picker.setInfos(t.colormaps)
       picker.setValue(t.colormap)
       // Legend
       legend.set({
@@ -116,6 +136,7 @@ export function createColorDisplay(
       displayRange.setDomain(t.displayDomain.min, t.displayDomain.max)
       displayRange.setValue(t.displayRange.min, t.displayRange.max)
       if (t.displaySymmetric !== undefined) displayRange.setSymmetric(t.displaySymmetric)
+      displayRange.setLockMin(!!t.lockMin)
       // Clip variant
       clipRangeField.hidden = t.clip !== 'range'
       if (t.clip === 'range' && t.clipDomain) {

@@ -12,7 +12,7 @@ import { Marker } from '@brainana/niivue-kit/marker.ts'
 import { OrientationGizmo } from '@brainana/niivue-kit/orientation.ts'
 import { createViewerStore, type Layout } from '../state/store.ts'
 import { parseAtlasTsv, buildLabelColortable, type AtlasLabel } from '../data/atlas.ts'
-import { ARM_SEED, D99_SEED } from '../data/colors.ts'
+import { ARM_SEED } from '../data/colors.ts'
 import { finiteExtrema, createFunctionalSurfaceLut, quantizeFunctionalSurfaceValues, maskSurfaceBinsByF, maskSurfaceBinsByValue, type SurfaceFunctionMode } from '../data/functional.ts'
 import { visualXY, visualFieldStats, ECC_MAX, type VfPoint } from '../data/visualField.ts'
 import { parseGiftiFloat32 } from '../data/gifti.ts'
@@ -321,18 +321,22 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
   // display range + clip), mounted once the view/colormaps exist. Applies to the active overlay.
   const colorDock = h('div', { class: 'color-dock' })
   const atlasLegend = h('aside', { class: 'atlas-legend' }, [sidePicker, sideContent, colorDock])
+  // Each column is a flex box: a fixed (non-scrolling) header + an `.info-scroll` region that owns
+  // the overflow, so the title stays put while only its content scrolls.
   const infoPanel = h('section', { class: 'info-panel' }, [
-    h('div', { class: 'info-col' }, [h('h3', {}, ['Coordinates']), h('div', { id: 'report-coordinates', class: 'muted' }, ['—'])]),
-    h('div', { class: 'info-col' }, [h('h3', {}, ['Atlas']), h('div', { id: 'report-anatomy', class: 'muted' }, ['—'])]),
-    h('div', { class: 'info-col' }, [h('h3', {}, ['Surface']), h('div', { id: 'report-surface', class: 'muted' }, ['—'])]),
-    h('div', { class: 'info-col' }, [h('h3', {}, ['Func Map']), h('div', { id: 'report-function', class: 'muted' }, ['—'])]),
+    h('div', { class: 'info-col' }, [h('h3', {}, ['Coordinates']), h('div', { class: 'info-scroll' }, [h('div', { id: 'report-coordinates', class: 'muted' }, ['—'])])]),
+    h('div', { class: 'info-col' }, [h('h3', {}, ['Atlas']), h('div', { class: 'info-scroll' }, [h('div', { id: 'report-anatomy', class: 'muted' }, ['—'])])]),
+    h('div', { class: 'info-col' }, [h('h3', {}, ['Surface']), h('div', { class: 'info-scroll' }, [h('div', { id: 'report-surface', class: 'muted' }, ['—'])])]),
+    h('div', { class: 'info-col' }, [h('h3', {}, ['Func Map']), h('div', { class: 'info-scroll' }, [h('div', { id: 'report-function', class: 'muted' }, ['—'])])]),
     h('div', { class: 'info-col' }, [
       h('div', { class: 'vf-header' }, [
         h('h3', {}, ['Visual field']),
         h('label', { class: 'neighborhood-control' }, [h('span', {}, ['neighborhood']), neighborhoodSelect]),
       ]),
-      h('canvas', { id: 'visual-field-canvas', class: 'vf-canvas' }),
-      h('div', { id: 'report-visual-note', class: 'muted' }, ['Add retinotopy in FUNC MAP first']),
+      h('div', { class: 'info-scroll' }, [
+        h('canvas', { id: 'visual-field-canvas', class: 'vf-canvas' }),
+        h('div', { id: 'report-visual-note', class: 'muted' }, ['Add retinotopy in FUNC MAP first']),
+      ]),
     ]),
   ])
   const placeholderText = h('p', { class: 'placeholder-text' }, ['Select a dataset, then choose a monkey to begin'])
@@ -608,11 +612,25 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
   function applyHidden(hidden: Set<number>): void {
     if (!view || atlasEntries.length === 0) return
     atlasHidden = hidden
-    // A continuous atlas colormap (if forced via the picker) stays on the volume; otherwise the
-    // categorical label table renders (respecting hidden ROIs). The surface stays categorical.
-    if (atlasColormap) view.setAtlasColormap(atlasColormap)
-    else view.setAtlasColortable(buildLabelColortable(atlasEntries, { seed: atlasSeed, hidden })) // slices volume (keeps negatives)
-    void view.updateSurfaceOverlayTable(buildLabelColortable(atlasEntries, { seed: atlasSeed, hidden, clipNegative: true })) // surface
+    applyAtlasColormap()
+  }
+
+  // Apply the current atlas colormap to BOTH the volume slices and the 3D surface (Req: a colormap
+  // change must recolor both). Categorical (`atlasColormap === null`): the per-ROI label table.
+  // Continuous (a colormap key — default for float atlases, or forced onto a parcellation): quantize
+  // values over [domain.min, atlasDisplayMax] into a shared ramp LUT, identical on volume + surface.
+  function applyAtlasColormap(): void {
+    if (!view) return
+    if (atlasColormap) {
+      const cmapLut = colormapLuts[atlasColormap] ?? view.colormapLut(atlasColormap)
+      if (!cmapLut) return
+      const range = { min: atlasDomain.min, max: atlasDisplayMax }
+      view.setAtlasContinuous(cmapLut, range) // volume slices
+      if (atlasSurfacePair) void view.setAtlasSurfaceContinuous(atlasSurfacePair, cmapLut, range, atlasOpacity) // surface
+    } else {
+      if (atlasEntries.length) view.setAtlasColortable(buildLabelColortable(atlasEntries, { seed: atlasSeed, hidden: atlasHidden })) // slices (keeps negatives)
+      void view.updateSurfaceOverlayTable(buildLabelColortable(atlasEntries, { seed: atlasSeed, hidden: atlasHidden, clipNegative: true })) // surface
+    }
   }
 
   // Current atlas surface overlay descriptor (per-hemi .func.gii + colortable), or null.
@@ -640,32 +658,48 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
       atlasEntries = []
       atlasSurfacePair = null
       atlasHidden = new Set()
+      atlasContinuous = false
       await applyOverlay() // drop the atlas surface layer in place (no reload)
       refreshColorDisplay()
       return
     }
-    const entry = sel.atlas === 'D99' ? manifest.atlases.d99 : manifest.atlases.charm[String(sel.level)]
+    const entry = manifest.atlases.find((a) => a.name === sel.name)
     if (!entry) return
-    atlasSeed = sel.atlas === 'D99' ? D99_SEED : ARM_SEED
-    const title = sel.atlas === 'D99' ? 'D99' : `ARM${sel.level}`
+    atlasSeed = ARM_SEED
+    const title = entry.label
     try {
-      atlasEntries = []
+      let parsed: AtlasLabel[] = []
       if (entry.labels) {
         const tsv = await (await client.apiFetch(entry.labels)).text()
-        atlasEntries = parseAtlasTsv(tsv)
+        parsed = parseAtlasTsv(tsv)
       }
       await view.loadAtlasOverlay(entry.volume, atlasOpacity)
       if (token !== atlasToken) return // a newer selection superseded this one
       atlasHidden = new Set()
-      if (atlasEntries.length) {
-        view.setAtlasColortable(buildLabelColortable(atlasEntries, { seed: atlasSeed }))
-        legend.setAtlas(title, atlasEntries, atlasSeed)
-      } else {
-        legend.clear()
-      }
-      // Color the surface with the precomputed atlas .func.gii (same golden-angle table).
       atlasSurfacePair = entry.surface ?? null
-      await applyOverlay() // swap the overlay layer in place (no base-surface reload)
+      atlasContinuous = view.atlasIsContinuous()
+      atlasDomain = view.atlasValueRange()
+      atlasDisplayMax = atlasDomain.max
+      if (atlasContinuous) {
+        // Continuous (float scalar) gradient: no discrete ROIs. Render with the default colormap on
+        // BOTH volume + surface; the ROI list is meaningless, so clear it (COLOR DISPLAY shows the bar).
+        atlasEntries = []
+        atlasColormap = CONTINUOUS_DEFAULT
+        legend.clear()
+        applyAtlasColormap()
+      } else {
+        // Categorical parcellation. No .tsv sidecar: derive the label set from the volume itself so
+        // it still renders categorically (procedural colors keyed by ID) with a legend + toolbar.
+        atlasColormap = null
+        atlasEntries = parsed.length ? parsed : view.atlasLabelIds().map((id) => ({ id, name: String(id), region: '', hemi: '' }))
+        if (atlasEntries.length) {
+          view.setAtlasColortable(buildLabelColortable(atlasEntries, { seed: atlasSeed }))
+          legend.setAtlas(title, atlasEntries, atlasSeed)
+        } else {
+          legend.clear()
+        }
+        await applyOverlay() // load + color the surface .func.gii categorically (no base-surface reload)
+      }
       refreshColorDisplay()
     } catch {
       // atlas load failure is non-fatal — leave the previous overlay in place
@@ -764,17 +798,24 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
   // The unified bottom "Color display" section + which overlay it currently targets.
   let colorDisplay: ColorDisplay | null = null
   type ColorTarget = 'morphology' | 'function' | 'atlas' | null
-  // Atlas overlay colormap: null = the categorical label table; a key = a continuous colormap forced
-  // onto the atlas volume. The synthetic 'labels' picker entry restores the categorical table.
+  // Atlas overlay colormap: null = the categorical label table; a key = a continuous colormap (the
+  // default for float scalar atlases like CortHierarchy, or forced onto a parcellation via the
+  // picker). The synthetic 'labels' picker entry restores the categorical table.
   let atlasColormap: string | null = null
   const LABELS_KEY = 'labels'
+  const CONTINUOUS_DEFAULT = 'magma' // default colormap for continuous (float scalar) atlases
+  // Continuous-atlas display state: whether the loaded atlas is a gradient, its fixed data-value
+  // domain, and the current (draggable) upper bound. Lower bound stays pinned at the domain min.
+  let atlasContinuous = false
+  let atlasDomain = { min: 0, max: 1 }
+  let atlasDisplayMax = 1
   // Per-hemisphere parsed frames of the currently loaded function surface .func.gii, cached so a
   // threshold/brightness drag re-quantizes in place without re-fetching (keyed by choice.kind).
   let funcSurfaceFrames: { kind: string; left: Float32Array[]; right: Float32Array[] } | null = null
 
   // Map a function choice to the categorical surface-LUT mode.
   const surfaceModeFor = (choice: FunctionChoice): SurfaceFunctionMode =>
-    choice.kind === 'somatotopy' ? 'somatotopy' : choice.mode.label === 'Eccentricity' ? 'eccentricity' : 'polar'
+    choice.kind === 'somatotopy' ? 'somatotopy' : choice.mode.id === 'eccentricity' ? 'eccentricity' : 'polar'
 
   // Fetch + parse the function surface .func.gii pair (all frames) for the active choice. Cached.
   const ensureFunctionSurfaceFrames = async (choice: FunctionChoice): Promise<boolean> => {
@@ -924,19 +965,25 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
     }
   }
 
-  const selectFunction = async (choice: FunctionChoice | null): Promise<void> => {
+  // Preserved function display settings, carried verbatim across a monkey switch (else recomputed to
+  // this map's defaults). Passing these THROUGH selectFunction keeps the surface application a single
+  // pass — applying it via a second applyFunctionSurface() would race the first (from inside
+  // selectFunction) on the shared surface layer and can leave it with the default gray colormap,
+  // painting every masked vertex opaque black.
+  type FuncPreserve = { threshold: number; colormap: string | null; calMin: number; calMax: number; clipLo: number | null; clipHi: number | null }
+  const selectFunction = async (choice: FunctionChoice | null, preserve?: FuncPreserve): Promise<void> => {
     if (!view || !manifest) return
     const token = ++funcToken
     funcChoice = choice
     funcSurfaceFrames = null // invalidate the cached surface frames for the previous choice
     // Reset per-map display overrides: default colormap, display range = the map's natural range,
-    // clip nothing.
-    funcColormap = null
-    funcClipLo = null
-    funcClipHi = null
+    // clip nothing — unless a snapshot is being restored, in which case adopt its exact values.
+    funcColormap = preserve ? preserve.colormap : null
+    funcClipLo = preserve ? preserve.clipLo : null
+    funcClipHi = preserve ? preserve.clipHi : null
     if (choice) {
-      funcCalMin = choice.mode.calMin
-      funcCalMax = choice.mode.calMax
+      funcCalMin = preserve ? preserve.calMin : choice.mode.calMin
+      funcCalMax = preserve ? preserve.calMax : choice.mode.calMax
     }
     functionPanel?.setActive(choice ? choiceKey(choice) : null)
     if (!choice) {
@@ -954,10 +1001,11 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
       if (token !== funcToken) return
       if (choice.mode.fFrame != null) {
         const { min, max } = finiteExtrema(view.scaledFrame(choice.mode.fFrame))
-        funcThreshold = Math.min(Math.max(min, 5), max) // default F ≥ 5, clamped
+        // Restore keeps the carried threshold (clamped into this map's range); else default F ≥ 5.
+        funcThreshold = preserve ? Math.min(Math.max(preserve.threshold, min), max) : Math.min(Math.max(min, 5), max)
         functionPanel?.setThresholdBounds(min, max, funcThreshold)
       } else {
-        funcThreshold = 0
+        funcThreshold = preserve ? preserve.threshold : 0
         functionPanel?.setThresholdBounds(0, 0, 0)
       }
       applyFunctionNow()
@@ -1015,14 +1063,14 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
   const colorTarget = (): ColorTarget => {
     if (dockedTab === 'function' && funcChoice) return 'function'
     if (dockedTab === 'morphology' && morphColorable()) return 'morphology'
-    if (dockedTab === 'atlas' && atlasEntries.length > 0) return 'atlas'
+    if (dockedTab === 'atlas' && lastAtlasSel != null) return 'atlas'
     return null
   }
 
   // Retinotopy legends are circular: polar angle → wheel, eccentricity → concentric rings.
   const legendShapeForFunc = (): 'bar' | 'wheel' | 'rings' => {
     if (!funcChoice || funcChoice.kind !== 'retinotopy') return 'bar'
-    return funcChoice.mode.label === 'Polar angle' ? 'wheel' : funcChoice.mode.label === 'Eccentricity' ? 'rings' : 'bar'
+    return funcChoice.mode.id === 'polar' ? 'wheel' : funcChoice.mode.id === 'eccentricity' ? 'rings' : 'bar'
   }
 
   const refreshColorDisplay = (): void => {
@@ -1047,6 +1095,7 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
         // Somatotopy's 0–100 axis is a body map (foot → hand → face); anchor the bar with those
         // parts so the numbers read as anatomy. Retinotopy uses wheel/rings legends (no bar ticks).
         barTicks: funcChoice.kind === 'somatotopy' ? ['foot', 'hand', 'face'] : undefined,
+        colormaps: colormapInfos.filter((i) => i.key !== LABELS_KEY), // "labels" is atlas-only
       })
     } else if (target === 'morphology') {
       const metric = morphActiveMetric()
@@ -1063,20 +1112,29 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
         clip: 'range',
         clipDomain: MORPH_DOMAIN[metric],
         clipValue: morphClip[metric],
+        colormaps: colormapInfos.filter((i) => i.key !== LABELS_KEY), // "labels" is atlas-only
       })
     } else if (target === 'atlas' && lastAtlasSel) {
-      // Atlas is categorical by default; the picker can force a continuous colormap onto the volume.
       const key = atlasColormap ?? LABELS_KEY
+      const continuous = atlasColormap !== null
       colorDisplay.setTarget({
-        title: `atlas · ${lastAtlasSel.atlas}${lastAtlasSel.level ? lastAtlasSel.level : ''}`,
+        title: `atlas · ${lastAtlasSel.name}`,
         colormap: key,
         legendShape: 'bar',
         gradient: colormapGradients[key] ?? FALLBACK_GRADIENT,
         lut: colormapLuts[key],
-        displayDomain: { min: 0, max: 1 },
-        displayRange: { min: 0, max: 1 },
-        showDisplayRange: false,
+        // Continuous: a real value domain with a draggable upper bound (lower pinned). Categorical:
+        // no meaningful range — hide the slider (the map spreads across label ids).
+        displayDomain: continuous ? atlasDomain : { min: 0, max: 1 },
+        displayRange: continuous ? { min: atlasDomain.min, max: atlasDisplayMax } : { min: 0, max: 1 },
+        showDisplayRange: continuous,
+        lockMin: continuous,
+        // A continuous gradient has no categorical mode, so don't offer "labels" in the picker.
+        colormaps: atlasContinuous ? colormapInfos.filter((i) => i.key !== LABELS_KEY) : colormapInfos,
         clip: 'none',
+        // Categorical: the ROI list already shows the real palette, so start the section collapsed.
+        // Continuous: the bar + range ARE the legend, so keep it open.
+        collapsed: !continuous,
       })
     } else {
       colorDisplay.setTarget(null)
@@ -1097,13 +1155,9 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
         view?.applyMorphologyDisplay(morphDisplay())
         refreshColorDisplay()
       } else if (t === 'atlas') {
-        if (key === LABELS_KEY) {
-          atlasColormap = null
-          applyHidden(atlasHidden) // restore the categorical label table on the volume
-        } else {
-          atlasColormap = key
-          view?.setAtlasColormap(key)
-        }
+        if (key === LABELS_KEY && atlasContinuous) return // a gradient has no categorical mode
+        atlasColormap = key === LABELS_KEY ? null : key
+        applyAtlasColormap() // recolors BOTH the volume slices and the 3D surface
         refreshColorDisplay()
       }
     },
@@ -1118,6 +1172,9 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
         morphRanges[morphActiveMetric()] = { min, max }
         view?.applyMorphologyDisplay(morphDisplay())
         refreshColorDisplay()
+      } else if (t === 'atlas' && atlasColormap) {
+        atlasDisplayMax = max // lower bound is pinned (lockMin); only the upper drives contrast
+        applyAtlasColormap() // re-quantize the volume + surface over the new window (no full refresh mid-drag)
       }
     },
     onDisplaySymmetric: (on: boolean): void => {
@@ -1168,8 +1225,11 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
         view?.applyMorphologyDisplay(morphDisplay())
         refreshColorDisplay()
       } else if (t === 'atlas') {
-        atlasColormap = null
-        applyHidden(atlasHidden)
+        // Continuous atlas resets to the default colormap + full data range; a parcellation resets
+        // to its categorical labels.
+        atlasColormap = atlasContinuous ? CONTINUOUS_DEFAULT : null
+        atlasDisplayMax = atlasDomain.max
+        applyAtlasColormap()
         refreshColorDisplay()
       }
     },
@@ -1232,8 +1292,6 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
       return a && node.index < a.length ? a[node.index] : NaN
     }
     const rows: Array<[string, string]> = [
-      ['geometry', SURFACE_LABELS[surfSelect.value] ?? surfSelect.value],
-      ['hemisphere', node.hemi === 0 ? 'left' : 'right'],
       ['nearest vertex', String(node.index)],
       ['distance (mm)', Number.isFinite(dist) ? dist.toFixed(2) : '—'],
       ['curvature', num(sample('curvature'))],
@@ -1292,7 +1350,7 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
   morphBtn.addEventListener('click', () => selectTab('morphology'))
   functionBtn.addEventListener('click', () => selectTab('function'))
 
-  // Atlas report: all ARM levels + D99 at the crosshair (sampled from report-only volumes).
+  // Atlas report: every discovered atlas at the crosshair (sampled from report-only volumes).
   let reportSpecs: Array<{ key: string; label: string; byId: Map<number, AtlasLabel> }> = []
 
   const updateAnatomyReport = (): void => {
@@ -1303,16 +1361,34 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
       return
     }
     el.innerHTML = ''
+    // Continuous float atlas (e.g. CortHierarchy): show the raw value, no id/label lookup. 0 and
+    // non-finite are background → blank. toFixed(4) + Number strips trailing zeros (2.7314, 2.7, 14).
+    const fmtValue = (v: number): string => (Number.isFinite(v) && v !== 0 ? String(Number(v.toFixed(4))) : '')
     for (const spec of reportSpecs) {
-      const id = view.sampleReportVolume(spec.key)
+      const raw = view.sampleReportVolume(spec.key)
+      if (view.reportVolumeContinuous(spec.key)) {
+        el.append(
+          h('div', { class: 'atlas-report-row' }, [
+            h('span', { class: 'atlas-report-name' }, [spec.label]),
+            h('span', { class: 'atlas-report-id' }, [raw != null ? fmtValue(raw) : '']),
+            h('span', { class: 'atlas-report-label' }, ['']),
+          ]),
+        )
+        continue
+      }
+      const id = raw != null ? Math.round(raw) : null
       const label = id != null && id !== 0 ? spec.byId.get(id) : null
       const isUnknown = !label && id != null && id !== 0 // id present but no region name resolves
       const name = label ? label.name.replace(/_/g, ' ') : isUnknown ? '(unlabeled)' : ''
+      const short = label?.nameShort ? label.nameShort.replace(/_/g, ' ') : ''
       el.append(
         h('div', { class: 'atlas-report-row' }, [
           h('span', { class: 'atlas-report-name' }, [spec.label]),
           h('span', { class: 'atlas-report-id' }, [id != null && id !== 0 ? String(id) : '']),
-          h('span', { class: `atlas-report-label${isUnknown ? ' unknown' : ''}` }, [name]),
+          h('span', { class: `atlas-report-label${isUnknown ? ' unknown' : ''}` }, [
+            ...(short ? [h('span', { class: 'atlas-report-short' }, [short]), ' · '] : []),
+            name,
+          ]),
         ]),
       )
     }
@@ -1322,11 +1398,7 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
     if (!view) return
     view.clearReportVolumes()
     const specEntries: Array<{ key: string; label: string; entry: { volume: string; labels: string | null } }> = []
-    for (let i = 1; i <= 6; i++) {
-      const e = m.atlases.charm[String(i)]
-      if (e) specEntries.push({ key: `ARM${i}`, label: `ARM${i}`, entry: e })
-    }
-    if (m.atlases.d99) specEntries.push({ key: 'D99', label: 'D99', entry: m.atlases.d99 })
+    for (const e of m.atlases) specEntries.push({ key: e.name, label: e.label, entry: e })
     reportSpecs = specEntries.map((s) => ({ key: s.key, label: s.label, byId: new Map<number, AtlasLabel>() }))
     for (const s of specEntries) {
       view.loadReportVolume(s.key, s.entry.volume).then(updateAnatomyReport).catch(() => {})
@@ -1347,10 +1419,81 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
   }
 
   // --- subject loading ---
+  // Snapshot of the current view, captured before a monkey switch so the incoming subject restores
+  // the exact same view (camera, overlays, settings) instead of resetting to defaults. Null on the
+  // first-ever load. Goal: "keep the current view, just swap the data" so two monkeys compare 1:1.
+  type ViewSnapshot = {
+    volumeKey: string | null
+    surfaceKind: string | null
+    camera: { azimuth: number; elevation: number; scale: number; baseScale: number }
+    crosshairMm: [number, number, number] | null
+    dockedTab: 'atlas' | 'morphology' | 'function' | null
+    // The overlay actually painted on the surface right now (at most one of atlas/function); plus the
+    // "remembered" selections for tab toggling, restored best-effort.
+    activeOverlay: 'atlas' | 'function' | null
+    lastAtlasSel: AtlasSelection | null
+    lastFuncChoice: FunctionChoice | null
+    atlas: { opacity: number; colormap: string | null; hidden: Set<number> }
+    func: { threshold: number; opacity: number; brightness: number; colormap: string | null; calMin: number; calMax: number; clipLo: number | null; clipHi: number | null }
+    morph: {
+      metric: MorphologyDisplayMetric
+      style: CurvatureStyle
+      ranges: Record<MorphologyMetric, { min: number; max: number }>
+      colormaps: Partial<Record<MorphologyMetric, string>>
+      clip: Record<MorphologyMetric, { lo: number | null; hi: number | null }>
+      symmetric: Record<MorphologyMetric, boolean>
+    }
+  }
+
+  const MORPH_METRICS: MorphologyMetric[] = ['curvature', 'sulc', 'thickness']
+  // Apply a snapshot's morphology shading state (or the defaults). Must run BEFORE applySurface, which
+  // reads morphDisplay(). A restored metric whose shape is missing on the new subject falls back to
+  // binary curvature (or 'none' if the subject has no curvature) so the surface still shades.
+  const applyMorphSnapshot = (m: ViewSnapshot['morph'] | null, mf: Manifest): void => {
+    for (const k of MORPH_METRICS) {
+      morphRanges[k] = m ? { ...m.ranges[k] } : { ...MORPH_DEFAULT_RANGE[k] }
+      morphColormaps[k] = m ? (m.colormaps[k] ?? MORPH_DEFAULT_COLORMAP[k]) : MORPH_DEFAULT_COLORMAP[k]
+      morphClip[k] = m ? { ...m.clip[k] } : { lo: null, hi: null }
+      morphSymmetric[k] = m ? m.symmetric[k] : MORPH_DEFAULT_SYMMETRIC[k]
+    }
+    let metric: MorphologyDisplayMetric = m?.metric ?? 'curvature'
+    if (metric !== 'none' && !mf.morphology?.shape?.[metric]) metric = mf.morphology?.shape?.curvature ? 'curvature' : 'none'
+    morphMetric = metric
+    morphStyle = m?.style ?? 'binary'
+  }
+
   const loadSubject = async (sourceId: string, subjectId: string): Promise<void> => {
     const label = subjectId.replace(/^sub-/, '')
     showLoading(`Loading ${label}…`)
-    surfaceScaled = false // re-fit the surface once for the new subject (Req 11)
+    // Capture the outgoing view before any state is overwritten, so it can be restored onto the new
+    // subject. Only when a view already exists (the first load has nothing to preserve).
+    const snap: ViewSnapshot | null =
+      view && manifest
+        ? {
+            volumeKey: manifest.volumes[Number(volSelect.value)]?.key ?? null,
+            surfaceKind: surfSelect.value || null,
+            camera: view.getCamera(),
+            crosshairMm: lastCrosshairMm,
+            dockedTab,
+            // lastAtlasSel (not atlasEntries.length) marks an active atlas: a continuous atlas has
+            // no ROIs (atlasEntries === []) yet is still a painted overlay to restore. Matches colorTarget().
+            activeOverlay: funcChoice ? 'function' : lastAtlasSel != null ? 'atlas' : null,
+            lastAtlasSel,
+            lastFuncChoice,
+            atlas: { opacity: atlasOpacity, colormap: atlasColormap, hidden: new Set(atlasHidden) },
+            func: { threshold: funcThreshold, opacity: funcOpacity, brightness: funcBrightness, colormap: funcColormap, calMin: funcCalMin, calMax: funcCalMax, clipLo: funcClipLo, clipHi: funcClipHi },
+            morph: {
+              metric: morphMetric,
+              style: morphStyle,
+              ranges: { curvature: { ...morphRanges.curvature }, sulc: { ...morphRanges.sulc }, thickness: { ...morphRanges.thickness } },
+              colormaps: { ...morphColormaps },
+              clip: { curvature: { ...morphClip.curvature }, sulc: { ...morphClip.sulc }, thickness: { ...morphClip.thickness } },
+              symmetric: { ...morphSymmetric },
+            },
+          }
+        : null
+    // Re-fit the surface zoom only on the first load; a switch restores the prior camera instead (Req 11).
+    if (!snap) surfaceScaled = false
     try {
       manifest = (await files.getManifest(sourceId, subjectId)) as unknown as Manifest
       store.update({ sourceId, subjectId })
@@ -1358,15 +1501,26 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
       // vol dropdown
       volSelect.innerHTML = ''
       manifest.volumes.forEach((v, i) => volSelect.append(h('option', { value: String(i) }, [v.label])))
-      const volIdx = defaultVolumeIndex(manifest.volumes)
+      // Keep the same base volume across a switch when this subject has it; else default (norm.mgz).
+      const snapVolIdx = snap?.volumeKey != null ? manifest.volumes.findIndex((v) => v.key === snap.volumeKey) : -1
+      const volIdx = snapVolIdx >= 0 ? snapVolIdx : defaultVolumeIndex(manifest.volumes)
       volSelect.value = String(volIdx)
 
       // surf dropdown (only present surfaces)
       const available = SURFACE_ORDER.filter((k) => manifest!.surfaces[k])
       surfSelect.innerHTML = ''
       available.forEach((k) => surfSelect.append(h('option', { value: k }, [SURFACE_LABELS[k]])))
-      const surfDefault = available.includes('inflated') ? 'inflated' : available[0]
+      // Keep the same surface type across a switch when this subject has it; else inflated / first.
+      const surfDefault =
+        snap?.surfaceKind && (available as string[]).includes(snap.surfaceKind)
+          ? snap.surfaceKind
+          : available.includes('inflated')
+            ? 'inflated'
+            : available[0]
       if (surfDefault) surfSelect.value = surfDefault
+
+      // Decide morphology shading now — applySurface (below) builds the surface from morphDisplay().
+      applyMorphSnapshot(snap?.morph ?? null, manifest)
 
       if (!view) {
         view = new MultiView(slicesCanvas, surfaceCanvas, client)
@@ -1419,85 +1573,114 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
       if (surfDefault) await applySurface(surfDefault)
       setActiveLayout(store.get('layout'))
 
-      // (re)build the atlas panel for this subject; start with no atlas visible.
+      // (re)build the atlas panel for this subject, restoring the prior opacity onto the slider.
       atlasPanel?.element.remove()
-      atlasPanel = createAtlasPanel(manifest, {
-        onSelect: (sel) => {
-          lastAtlasSel = sel
-          void selectAtlas(sel)
+      if (snap) atlasOpacity = snap.atlas.opacity
+      atlasPanel = createAtlasPanel(
+        manifest,
+        {
+          onSelect: (sel) => {
+            lastAtlasSel = sel
+            void selectAtlas(sel)
+          },
+          onOpacity: (v) => {
+            atlasOpacity = v
+            view!.setAtlasOpacity(v) // slices volume
+            view!.setSurfaceOverlayOpacity(v) // surface layer
+          },
         },
-        onOpacity: (v) => {
-          atlasOpacity = v
-          view!.setAtlasOpacity(v) // slices volume
-          view!.setSurfaceOverlayOpacity(v) // surface layer
-        },
-      })
+        { opacity: atlasOpacity },
+      )
       sidePicker.append(atlasPanel.element)
-      await selectAtlas(null)
+      // Restore the remembered atlas (for tab toggling) only if this subject has one of the same name.
+      lastAtlasSel = snap?.lastAtlasSel && manifest.atlases?.some((a) => a.name === snap.lastAtlasSel!.name) ? snap.lastAtlasSel : null
+      if (snap?.activeOverlay === 'atlas' && lastAtlasSel) {
+        await selectAtlas(lastAtlasSel) // selectAtlas sets colormap (magma for float atlases, else categorical), hidden→∅
+        view!.setSurfaceOverlayOpacity(atlasOpacity)
+        if (snap.atlas.colormap && snap.atlas.colormap !== atlasColormap) {
+          atlasColormap = snap.atlas.colormap
+          applyAtlasColormap() // re-apply the saved colormap override on vol + surf
+        }
+        if (snap.atlas.hidden.size) applyHidden(new Set(snap.atlas.hidden)) // restore hidden ROIs (also re-applies colormap)
+        refreshColorDisplay()
+      } else {
+        await selectAtlas(null)
+      }
       loadReportSpecs(manifest)
 
-      // (re)build the function panel for this subject.
+      // (re)build the function panel for this subject, restoring the prior opacity/brightness sliders.
       functionPanel?.element.remove()
-      functionPanel = createFunctionPanel(manifest, {
-        onSelect: (choice) => {
-          lastFuncChoice = choice
-          void selectFunction(choice)
+      if (snap) {
+        funcOpacity = snap.func.opacity
+        funcBrightness = snap.func.brightness
+      }
+      functionPanel = createFunctionPanel(
+        manifest,
+        {
+          onSelect: (choice) => {
+            lastFuncChoice = choice
+            void selectFunction(choice)
+          },
+          onThreshold: (v) => {
+            funcThreshold = v
+            applyFunctionNow()
+            void applyFunctionSurface() // re-mask the surface at the new threshold
+            updateFunctionReport()
+            updateVisualField()
+          },
+          onOpacity: (v) => {
+            funcOpacity = v
+            view!.setFunctionalOpacity(v)
+            void applyFunctionSurface() // opacity also drives the surface layer
+          },
+          onBrightness: (v) => {
+            funcBrightness = v
+            void applyFunctionSurface()
+          },
         },
-        onThreshold: (v) => {
-          funcThreshold = v
-          applyFunctionNow()
-          void applyFunctionSurface() // re-mask the surface at the new threshold
-          updateFunctionReport()
-          updateVisualField()
-        },
-        onOpacity: (v) => {
-          funcOpacity = v
-          view!.setFunctionalOpacity(v)
-          void applyFunctionSurface() // opacity also drives the surface layer
-        },
-        onBrightness: (v) => {
-          funcBrightness = v
-          void applyFunctionSurface()
-        },
-      })
+        { opacity: funcOpacity, brightness: funcBrightness },
+      )
       sidePicker.append(functionPanel.element)
-      funcChoice = null
+      // Restore the remembered function map if this subject has the same map kind; else clear. Pass the
+      // snapshot settings THROUGH selectFunction (single surface pass) for an exact "carry over" match.
+      lastFuncChoice = snap?.lastFuncChoice ? functionPanel.getChoice(choiceKey(snap.lastFuncChoice)) : null
+      if (snap?.activeOverlay === 'function' && lastFuncChoice) {
+        await selectFunction(lastFuncChoice, snap.func)
+      } else {
+        funcChoice = null
+      }
       loadMorphology(manifest)
 
-      // (re)build the morphology panel for this subject; reset to the default (binary curvature).
+      // (re)build the morphology panel, reflecting the restored shading (set by applyMorphSnapshot).
       morphPanel?.element.remove()
-      morphMetric = 'curvature'
-      morphStyle = 'binary'
-      markerMode = 'nearestNode'
-      morphClip.curvature = { lo: null, hi: null }
-      morphClip.sulc = { lo: null, hi: null }
-      morphClip.thickness = { lo: null, hi: null }
-      morphColormaps.curvature = 'gray'
-      morphColormaps.sulc = 'blue2red'
-      morphColormaps.thickness = 'viridis'
-      morphRanges.curvature = { ...MORPH_DEFAULT_RANGE.curvature }
-      morphRanges.sulc = { ...MORPH_DEFAULT_RANGE.sulc }
-      morphRanges.thickness = { ...MORPH_DEFAULT_RANGE.thickness }
-      morphPanel = createMorphologyPanel({
-        onDisplay: (m) => {
-          morphMetric = m
-          view?.applyMorphologyDisplay(morphDisplay())
-          refreshColorDisplay()
+      morphPanel = createMorphologyPanel(
+        {
+          onDisplay: (m) => {
+            morphMetric = m
+            view?.applyMorphologyDisplay(morphDisplay())
+            refreshColorDisplay()
+          },
+          onCurvatureStyle: (s) => {
+            morphStyle = s
+            view?.applyMorphologyDisplay(morphDisplay())
+            refreshColorDisplay()
+          },
         },
-        onCurvatureStyle: (s) => {
-          morphStyle = s
-          view?.applyMorphologyDisplay(morphDisplay())
-          refreshColorDisplay()
-        },
-      })
+        { metric: morphMetric, style: morphStyle },
+      )
       sidePicker.append(morphPanel.element)
       refreshColorDisplay()
 
-      // Start each subject base-only: no overlay drawn, no picker docked (bare morphology base).
-      dockedTab = null
-      lastAtlasSel = null
-      lastFuncChoice = null
+      // Restore the docked side tab (which picker is open); overlays were restored above.
+      dockedTab = snap ? snap.dockedTab : null
       updateTabUI()
+
+      // Restore the surface camera (zoom + orientation) and the crosshair coordinate, so the switch is
+      // a pure data swap. Done last, after all mesh/volume loads that could otherwise reset the camera.
+      if (snap) {
+        view!.setCamera(snap.camera)
+        if (snap.crosshairMm) view!.moveCrosshairToWorld(snap.crosshairMm)
+      }
 
       main.classList.add('monkey-loaded')
       hideLoading()
@@ -1525,7 +1708,7 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
         continue
       }
       if (run !== monkeyRun) return // a newer run superseded this one
-      const group = h('optgroup', { label: src.label }) as HTMLOptGroupElement
+      const group = h('optgroup', { label: src.customLabel || src.label }) as HTMLOptGroupElement
       for (const m of monkeys) {
         const opt = h('option', { value: `${src.id}::${m.id}` }, [m.label]) as HTMLOptionElement
         group.append(opt)

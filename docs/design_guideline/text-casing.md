@@ -17,8 +17,10 @@ field label is written lowercase — e.g. `map`, `opacity`, `surface brightness`
 3. **Full-sentence prose is NOT a label** — help text, empty/error/status messages, and descriptive
    tooltips (e.g. "Surface on top, planes in a row", "No datasets yet.") stay normal sentence case.
    Lowercasing whole sentences reads as broken text.
-4. **Info bottom panel** — its readout `dl` labels, the coordinate editor (`X (mm)`, `hemi`, …), and
-   its column `h3`s are the deliberate lowercase/instrument style and are left as-is.
+4. **Info bottom panel** — its readout `dl` labels and the coordinate editor (`X (mm)`, `hemi`, …)
+   are the deliberate lowercase/instrument style and are left as-is. Its column `h3`s
+   (`Coordinates`, `Atlas`, `Surface`, `Func Map`, `Visual field`) are Title Case in source and
+   CSS-uppercased like the other sub-headers.
 
 ## Notable specifics
 

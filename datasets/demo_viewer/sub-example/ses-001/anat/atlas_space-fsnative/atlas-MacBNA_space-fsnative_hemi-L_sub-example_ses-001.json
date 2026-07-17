@@ -1,0 +1,12 @@
+{
+  "Type": "ROI",
+  "Sources": [
+    "atlas-MacBNA_space-T1w_sub-example_ses-001.nii.gz"
+  ],
+  "GeneratedBy": [
+    {
+      "Name": "brainana",
+      "Version": "1.3.0"
+    }
+  ]
+}

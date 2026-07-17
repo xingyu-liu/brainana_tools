@@ -1,0 +1,28 @@
+{
+  "step": "project_atlases_to_surface",
+  "space": "fsnative",
+  "target_grid": "sub-example/mri/T1.mgz",
+  "atlases_projected": 12,
+  "sidecars": [
+    "atlas/atlas-ARM1.tsv",
+    "atlas/atlas-ARM1.bib",
+    "atlas/atlas-ARM2.tsv",
+    "atlas/atlas-ARM2.bib",
+    "atlas/atlas-ARM3.tsv",
+    "atlas/atlas-ARM3.bib",
+    "atlas/atlas-ARM4.tsv",
+    "atlas/atlas-ARM4.bib",
+    "atlas/atlas-ARM5.tsv",
+    "atlas/atlas-ARM5.bib",
+    "atlas/atlas-ARM6.tsv",
+    "atlas/atlas-ARM6.bib",
+    "atlas/atlas-CortHierarchy.bib",
+    "atlas/atlas-D99.bib",
+    "atlas/atlas-FuncNetwork.bib",
+    "atlas/atlas-MacBNA.bib",
+    "atlas/atlas-retinotopy.md",
+    "atlas/atlas-retinotopy.bib",
+    "atlas/atlas-somatotopy.md",
+    "atlas/atlas-somatotopy.bib"
+  ]
+}

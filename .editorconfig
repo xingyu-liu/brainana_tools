@@ -1,0 +1,21 @@
+# EditorConfig — https://editorconfig.org
+# Canonical formatting for the brainana_tools monorepo. Matches the existing
+# 2-space ESM/TS source and LF line endings; no linter/formatter is configured,
+# so this file is the single source of editor defaults.
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown: two trailing spaces are a hard line break — do not strip them.
+[*.md]
+trim_trailing_whitespace = false
+
+# Makefiles require real tabs.
+[Makefile]
+indent_style = tab

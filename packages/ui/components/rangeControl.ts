@@ -28,6 +28,8 @@ export interface RangeControl {
   setValue: (min: number, max: number) => void
   value: () => RangeValue
   setSymmetric: (on: boolean) => void
+  /** Pin the lower bound: disable the min handle/box so only the upper bound drags (e.g. atlas). */
+  setLockMin: (on: boolean) => void
   /** Blank/disable the control (e.g. no active metric). */
   setDisabled: (disabled: boolean) => void
 }
@@ -147,6 +149,11 @@ export function createRangeControl(opts: RangeControlOptions): RangeControl {
       symmetric = on
       symChip?.classList.toggle('active', on)
       applyBounds()
+    },
+    setLockMin: (on) => {
+      minInput.disabled = on
+      minVal.disabled = on
+      element.classList.toggle('lock-min', on)
     },
     setDisabled: (disabled) => {
       minInput.disabled = disabled

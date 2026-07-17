@@ -23,11 +23,22 @@ export interface FunctionPanel {
   element: HTMLElement
   setActive: (key: string | null) => void
   setThresholdBounds: (min: number, max: number, value: number) => void
+  // Resolve the equivalent choice for THIS subject by key, so a monkey switch can restore the same
+  // map (the choice objects differ per subject — they carry the subject's own frame indices).
+  getChoice: (key: string) => FunctionChoice | null
+}
+
+// Restored control values carried across a monkey switch (sliders are display-only until dragged, so
+// seeding them keeps the UI in sync with the restored overlay). Threshold is set separately via
+// setThresholdBounds because it depends on the freshly-loaded map's F-range.
+export interface FunctionPanelInitial {
+  opacity?: number
+  brightness?: number
 }
 
 export const choiceKey = (c: FunctionChoice): string => `${c.kind}:${c.mode.label}`
 
-export function createFunctionPanel(manifest: Manifest, cb: FunctionPanelCallbacks): FunctionPanel {
+export function createFunctionPanel(manifest: Manifest, cb: FunctionPanelCallbacks, initial: FunctionPanelInitial = {}): FunctionPanel {
   const choices = new Map<string, FunctionChoice>()
   const options: SelectOption[] = [{ value: 'none', label: 'none' }]
 
@@ -56,10 +67,10 @@ export function createFunctionPanel(manifest: Manifest, cb: FunctionPanelCallbac
     disabled: true,
     onInput: (v) => cb.onThreshold(v),
   })
-  const opacity = createSlider({ label: 'opacity', min: 0, max: 1, step: 0.05, value: 1, onInput: (v) => cb.onOpacity(v) })
+  const opacity = createSlider({ label: 'opacity', min: 0, max: 1, step: 0.05, value: initial.opacity ?? 1, onInput: (v) => cb.onOpacity(v) })
   // Function on the 3D surface is always shown for the active map; only the LUT brightness is
   // adjustable (blends toward white).
-  const brightness = createSlider({ label: 'surface brightness', min: 0.5, max: 2, step: 0.05, value: 1, onInput: (v) => cb.onBrightness(v) })
+  const brightness = createSlider({ label: 'surface brightness', min: 0.5, max: 2, step: 0.05, value: initial.brightness ?? 1, onInput: (v) => cb.onBrightness(v) })
 
   const element = h('div', { class: 'side-panel', hidden: true }, [
     h('div', { class: 'side-panel-head' }, ['func map']),
@@ -72,6 +83,7 @@ export function createFunctionPanel(manifest: Manifest, cb: FunctionPanelCallbac
   return {
     element,
     setActive: (key) => picker.setValue(key ?? 'none'),
+    getChoice: (key) => choices.get(key) ?? null,
     setThresholdBounds: (min, max, value) => {
       if (!(max > min)) {
         thresh.setDisabled(true)

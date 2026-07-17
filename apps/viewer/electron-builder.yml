@@ -1,0 +1,52 @@
+# electron-builder config for the Brainana Viewer desktop app.
+# Run from the repo root: `npm run dist:desktop` (builds dist/ then packages per-OS installers).
+# The Electron entry is the root package.json "main" (apps/viewer/desktop.mjs).
+appId: org.brainana.viewer
+productName: Brainana Viewer
+copyright: Brainana
+
+asar: true
+# Native binaries (ssh2's optional cpu-features .node) cannot be loaded from inside an asar
+# archive — unpack them to disk. ssh2 falls back to pure JS if the ABI mismatches Electron's Node,
+# so SFTP works regardless; this just lets a matching binary load if present.
+asarUnpack:
+  - "**/*.node"
+
+directories:
+  output: apps/viewer/release
+
+# App payload: the built SPA (Vite bundles NiiVue/fflate/nifti-reader-js into dist/, so those
+# devDependencies are NOT shipped as node_modules) + the app's own .mjs server/desktop code +
+# manifests. The @brainana/core-{desktop,launcher,server} packages ship via node_modules — they are
+# declared as production dependencies in the root package.json, so electron-builder dereferences
+# their workspace symlinks into node_modules inside app.asar automatically (alongside ssh2).
+# Everything TS/test/build-time is excluded.
+files:
+  - "apps/viewer/desktop.mjs"
+  - "apps/viewer/dist/**/*"
+  - "apps/viewer/server/**/*.mjs"
+  - "apps/viewer/package.json"
+  - "package.json"
+  - "!**/*.ts"
+  - "!**/*.map"
+  - "!**/tests/**"
+  - "!**/*.config.*"
+  - "!**/*.md"
+
+# Ship a single locale to trim the Chromium payload.
+electronLanguages:
+  - en-US
+
+linux:
+  target: [AppImage, deb]
+  category: Science
+
+mac:
+  target: [dmg, zip]
+  category: public.app-category.medical
+  # v1 is unsigned/ad-hoc — fine for local + known users (right-click → Open on first launch).
+  # For wider distribution, set an Apple identity here and enable notarization.
+  identity: null
+
+win:
+  target: [nsis]

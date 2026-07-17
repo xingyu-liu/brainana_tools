@@ -80,12 +80,16 @@ export function createLegend(label = 'Legend'): Legend {
     const rInner = rOuter * 0.34
     // A single conic gradient paints the whole ring in one fill — no per-wedge anti-aliasing seams,
     // and it wraps continuously through 0°/360° (the color at offset 1 matches offset 0 for the
-    // cyclic polar map). Angle 0 = +x, clockwise, matching the retinotopy convention.
+    // cyclic polar map). A conic gradient runs CLOCKWISE from 3 o'clock, but the polar-angle
+    // convention is standard math orientation (value 0 at the right, angle increasing COUNTER-
+    // clockwise: +π/2 up, ±π left, −π/2 down). So remap each ring offset `o` to the LUT position
+    // (0.5 − o), which puts value 0 at 3 o'clock and reverses the sweep to CCW — otherwise the wheel
+    // renders left↔right mirrored (invisible on the L/R map, wrong on the smooth cyclic map).
     const grad = ctx.createConicGradient(0, cx, cy)
     const STOPS = 90
     for (let s = 0; s <= STOPS; s++) {
       const t = s / STOPS
-      grad.addColorStop(t, sampleLut(lut, t))
+      grad.addColorStop(t, sampleLut(lut, ((0.5 - t) % 1 + 1) % 1))
     }
     // Fill the annulus: outer circle (CW) minus inner circle (CCW) leaves the center hole.
     ctx.beginPath()

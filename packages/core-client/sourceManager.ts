@@ -5,7 +5,10 @@ import type { RuntimeClient } from './runtimeClient.ts'
 export interface SourceSummary {
   id: string
   type: 'local' | 'remote'
+  /** Server-derived name (folder basename or user@host:root). Immutable identity shown to users. */
   label: string
+  /** User-editable display name overriding `label` in pickers; null when unset. RAM-only server-side. */
+  customLabel: string | null
 }
 
 export interface LocalSourceSpec {
@@ -86,6 +89,19 @@ export class SourceManager {
 
   addRemote(spec: Omit<RemoteSourceSpec, 'type'>): Promise<SourceSummary> {
     return this.add({ type: 'remote', ...spec })
+  }
+
+  /** Set (or clear, with null) a source's custom display label. Persists server-side for the
+   *  session; the returned summary replaces the cached one and subscribers are notified. */
+  async setLabel(id: string, label: string | null): Promise<SourceSummary> {
+    const updated = await this.#client.apiJson<SourceSummary>(`/api/sources/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ customLabel: label ?? '' }),
+    })
+    this.#sources = this.#sources.map((source) => (source.id === id ? updated : source))
+    this.#emit()
+    return updated
   }
 
   /** Close a source on the server and drop it from the registry. Throws if the server refuses. */

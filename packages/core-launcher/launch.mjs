@@ -61,14 +61,13 @@ function openBrowser(url) {
   }
 }
 
-// Boot a brainana tool: mint a token, find a free loopback port, start the core server with the
-// app's injected manifest provider, and open the browser. The app supplies its own identity.
-export async function launch({ manifestProvider, appLabel = 'Brainana', distRoot = null, cacheApp = 'Brainana', preferredPort = 5173 }) {
+// Boot the core server WITHOUT choosing a frontend surface: mint a token, find a free loopback
+// port, start the server with the app's injected manifest provider, and log. It deliberately does
+// NOT open a browser or install signal handlers — those are the caller's concern. This is the
+// shared core reused by both the browser launcher (`launch()`, below) and the desktop shell
+// (`@brainana/core-desktop`), which loads the same URL in an Electron BrowserWindow instead.
+export async function bootServer({ manifestProvider, appLabel = 'Brainana', distRoot = null, cacheApp = 'Brainana', preferredPort = 5173, legacyCompat = false }) {
   const token = generateSessionToken()
-  // The built dist/ IS the source-scoped, token-guarded frontend — it does NOT use the
-  // unscoped, token-exempt legacy route. So legacy-compat is an explicit opt-in (--legacy),
-  // never implied by the mere presence of a build.
-  const legacyCompat = hasFlag('--legacy')
   const cache = cacheDir(cacheApp)
   fs.mkdirSync(cache, { recursive: true })
 
@@ -77,6 +76,18 @@ export async function launch({ manifestProvider, appLabel = 'Brainana', distRoot
   console.log(`${appLabel} ${versionInfo.version} (${versionInfo.buildId})`)
   console.log(`Serving on ${url} (loopback only, session token active)`)
   console.log(`Cache: ${cache}`)
+
+  return { server, address, url, token, cache }
+}
+
+// Boot a brainana tool: mint a token, find a free loopback port, start the core server with the
+// app's injected manifest provider, and open the browser. The app supplies its own identity.
+export async function launch({ manifestProvider, appLabel = 'Brainana', distRoot = null, cacheApp = 'Brainana', preferredPort = 5173 }) {
+  // The built dist/ IS the source-scoped, token-guarded frontend — it does NOT use the
+  // unscoped, token-exempt legacy route. So legacy-compat is an explicit opt-in (--legacy),
+  // never implied by the mere presence of a build.
+  const boot = await bootServer({ manifestProvider, appLabel, distRoot, cacheApp, preferredPort, legacyCompat: hasFlag('--legacy') })
+  const { server, address, url } = boot
 
   if (!hasFlag('--no-open') && !hasFlag('--dev')) openBrowser(url)
 

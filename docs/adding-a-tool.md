@@ -10,7 +10,8 @@ that file probably belongs in a shared package instead.
 | Package | Gives you |
 |---|---|
 | `@brainana/core-server` | Loopback HTTP runtime, session-token guard, `DataSource` registry (local + SFTP), remote cache, atomic export, per-OS paths. `runServerCli(options)` for a headless entry. |
-| `@brainana/core-launcher` | `launch(options)` — mint token, free port, start server, open the default browser. |
+| `@brainana/core-launcher` | `bootServer(options)` — mint token, free port, start server (shared core); `launch(options)` adds open-browser + signal handlers. |
+| `@brainana/core-desktop` | `runDesktop(options)` — the Electron shell: boots the server via `bootServer`, loads the loopback URL in a hardened `BrowserWindow`. Same options object as `launch`. See [desktop-app.md](desktop-app.md). |
 | `@brainana/core-client` | Browser platform: `RuntimeClient`, `SourceManager`, `FilesystemClient`, session persistence, export destinations, WebGL2 capability gate. |
 | `@brainana/ui` | Design-token theme (`theme.css` + fonts), the `h()` DOM helper, generic components (colorbar, slider, range control, legend). |
 | `@brainana/niivue-kit` | Generic NiiVue helpers: orientation gizmo, landmark/crosshair markers. |
@@ -22,9 +23,10 @@ that file probably belongs in a shared package instead.
   core `DataSource` is given so core never imports your domain. See
   `apps/viewer/server/manifest.mjs` (`viewerManifestProvider`).
 - Its **UI** (dashboard, panels, domain-specific components) and any **domain math/data shaping**.
-- Two thin **composition entries** that inject identity + provider into the shared platform:
-  `apps/<tool>/launch.mjs` (calls `launch(...)`) and `apps/<tool>/server.mjs` (calls
-  `runServerCli(...)`). Copy `apps/viewer/{launch,server}.mjs` and change the identity strings.
+- Thin **composition entries** that inject identity + provider into the shared platform:
+  `apps/<tool>/launch.mjs` (browser, calls `launch(...)`), `apps/<tool>/server.mjs` (headless, calls
+  `runServerCli(...)`), and — for a native desktop build — `apps/<tool>/desktop.mjs` (calls
+  `runDesktop(...)`). Copy `apps/viewer/{launch,server,desktop}.mjs` and change the identity strings.
 
 ## Steps
 

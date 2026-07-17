@@ -1,6 +1,7 @@
 // Source-scoped filesystem/browse client. Every call targets a specific sourceId so the
 // UI can hold and query several sources at once.
 import { sourceBase, type RuntimeClient } from './runtimeClient.ts'
+import type { RemoteConnection } from './sourceManager.ts'
 
 export interface MonkeySummary {
   id: string
@@ -80,5 +81,30 @@ export class FilesystemClient {
   // no source yet). Empty `abs` lets the server default to its home directory.
   browseFs(abs = ''): Promise<BrowseListing> {
     return this.#client.apiJson(`/api/fs/browse?path=${encodeURIComponent(abs)}`)
+  }
+
+  // Open a pre-add SFTP connection for interactive remote browsing; returns a session token used
+  // by browseRemote/disconnectRemote. The password is sent once and never persisted server-side.
+  connectRemote(connection: RemoteConnection): Promise<{ token: string }> {
+    return this.#client.apiJson('/api/remote/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ connection }),
+    })
+  }
+
+  // List directories under an absolute remote path on an open connection. Empty `abs` starts at the
+  // remote home directory (server-resolved). Same shape as browseFs so the picker is shared.
+  browseRemote(token: string, abs = ''): Promise<BrowseListing> {
+    return this.#client.apiJson(`/api/remote/browse?token=${encodeURIComponent(token)}&path=${encodeURIComponent(abs)}`)
+  }
+
+  // Close a pre-add remote browse session (best-effort; frees the server-side SFTP socket).
+  disconnectRemote(token: string): Promise<{ ok: boolean }> {
+    return this.#client.apiJson('/api/remote/disconnect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token }),
+    })
   }
 }

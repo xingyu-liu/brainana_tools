@@ -8,7 +8,13 @@
 
 export type FunctionalKind = 'retinotopy' | 'somatotopy'
 
+// Stable, casing-independent identity of a mode. Rendering logic (legend shape, surface LUT)
+// keys off this — NEVER the display `label`, which is UI text and can be re-cased/reworded.
+export type FunctionalModeId = 'polar' | 'eccentricity' | 'bodyPosition'
+
 export interface FunctionalMode {
+  /** Stable identity for rendering logic (independent of `label` text/casing). */
+  id: FunctionalModeId
   /** UI label. */
   label: string
   /** 4D frame index of the value map to display. */
@@ -33,13 +39,13 @@ export function functionalModes(kind: FunctionalKind, frames: Record<string, num
     const modes: FunctionalMode[] = []
     // Default to the left/right-hemifield split map (brainana_polar_lr); the smooth cyclic wheel
     // (brainana_polar_angle) stays a selectable option (see niivue/colormaps.ts).
-    if (frames.polar != null) modes.push({ label: 'polar angle', valueFrame: frames.polar, fFrame: frames.polarF ?? null, colormap: 'brainana_polar_lr', calMin: POLAR_MIN, calMax: POLAR_MAX })
-    if (frames.eccentricity != null) modes.push({ label: 'eccentricity', valueFrame: frames.eccentricity, fFrame: frames.eccentricityF ?? null, colormap: 'brainana_eccentricity', calMin: -0.0394, calMax: 10 })
+    if (frames.polar != null) modes.push({ id: 'polar', label: 'polar angle', valueFrame: frames.polar, fFrame: frames.polarF ?? null, colormap: 'brainana_polar_lr', calMin: POLAR_MIN, calMax: POLAR_MAX })
+    if (frames.eccentricity != null) modes.push({ id: 'eccentricity', label: 'eccentricity', valueFrame: frames.eccentricity, fFrame: frames.eccentricityF ?? null, colormap: 'brainana_eccentricity', calMin: -0.0394, calMax: 10 })
     return modes
   }
   // somatotopy: reversed blue->red LUT so 0 is blue and 100 is red
   const modes: FunctionalMode[] = []
-  if (frames.phase != null) modes.push({ label: 'body position', valueFrame: frames.phase, fFrame: frames.fstat ?? null, colormap: 'brainana_somatotopy', calMin: -0.3937, calMax: 100 })
+  if (frames.phase != null) modes.push({ id: 'bodyPosition', label: 'body position', valueFrame: frames.phase, fFrame: frames.fstat ?? null, colormap: 'brainana_somatotopy', calMin: -0.3937, calMax: 100 })
   return modes
 }
 
@@ -184,6 +190,26 @@ export function createFunctionalSurfaceLut(mode: SurfaceFunctionMode, brightness
     rgba.set([brightenChannel(r0, brightness), brightenChannel(g0, brightness), brightenChannel(b0, brightness), 255], bin * 4)
   }
   return { lut: rgba, min: 0, max: 255, labels }
+}
+
+// Quantize a continuous scalar field to LUT bins 1..255 over [min, max]; background (value 0 or
+// non-finite) → bin 0 (transparent). Shared by the continuous-atlas VOLUME and SURFACE so both
+// derive identical bins for the same 256-entry colormap LUT, keeping the slices and the 3D mesh
+// pixel-consistent. (Distinct from quantizeFunctionalSurfaceValues, whose masking sentinel is <=-999
+// and which supports polar/eccentricity modes; here 0 is the background sentinel, as in the volume.)
+export function quantizeScalarToBins(values: ArrayLike<number>, min: number, max: number): Float32Array {
+  const out = new Float32Array(values.length)
+  const span = max - min
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i]
+    if (!Number.isFinite(v) || v === 0) {
+      out[i] = 0
+      continue
+    }
+    const t = span > 0 ? Math.max(0, Math.min(1, (v - min) / span)) : 0
+    out[i] = 1 + Math.min(254, Math.max(0, Math.round(t * 254)))
+  }
+  return out
 }
 
 // Map per-vertex values to LUT bin indices 1..255; sentinel / non-finite / <= -999 → bin 0.

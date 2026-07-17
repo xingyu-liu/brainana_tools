@@ -1,6 +1,9 @@
 # Build output (built in CI, never committed) — Part II §5, §6
 apps/*/dist/
 
+# Desktop packaging output (electron-builder installers/unpacked apps) — never committed
+apps/*/release/
+
 # Generated single-source-of-version module (emitted by scripts/generate-version.mjs on
 # pre{dev,start,server,test,build}); never edited or committed — its BUILD_ID embeds the date.
 packages/core-server/version.mjs

@@ -1,0 +1,14 @@
+{
+  "name": "@brainana/core-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tool-agnostic Electron shell shared by every brainana tool: boots the core loopback server (via @brainana/core-launcher) and loads it in a hardened BrowserWindow instead of the system browser. Bundles the WebGL2-reliable Chromium the NiiVue frontend needs.",
+  "exports": {
+    "./*": "./*"
+  },
+  "dependencies": {
+    "@brainana/core-launcher": "*",
+    "@brainana/core-server": "*"
+  }
+}
