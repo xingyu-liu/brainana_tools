@@ -128,12 +128,17 @@ git push origin v0.1.0                           # pushing the tag launches the 
 
 On github.com → your repo → **Actions** tab → the **Release** run. Three jobs run in parallel
 (ubuntu / windows / macos). They take roughly 5–15 minutes. Each one builds its installers and
-uploads them to a **draft** Release for the `v0.1.0` tag.
+uploads them to the **published** Release for the `v0.1.0` tag.
 
-### 6. Review and publish the draft Release
+> **`publish.releaseType: release`** (set in `electron-builder.yml`) means the installers attach
+> to a **published, public** Release — there is no draft-review gate. If no Release exists for the
+> tag yet, the workflow **creates one, already public**; if you pre-created/published a Release for
+> the tag (see the alternative trigger below), the installers attach to that one.
 
-Go to the **Releases** page (repo home → "Releases" on the right). You'll see a **Draft** for
-`v0.1.0` with the installers attached — expect these assets:
+### 6. Confirm the Release assets
+
+Go to the **Releases** page (repo home → "Releases" on the right). Open the `v0.1.0` Release and
+confirm these assets are attached:
 
 | OS | Files a user downloads |
 |---|---|
@@ -145,8 +150,18 @@ Go to the **Releases** page (repo home → "Releases" on the right). You'll see 
 (`.zip` copies of the Mac apps and `.yml`/`.blockmap` metadata files also appear — those are for
 future auto-update; leave them attached.)
 
-Click **Edit** on the draft, write a short "what's new" summary (you can paste from the
-changelog), then click **Publish release**. It's now public on the Releases page.
+Click **Edit** to add or refine the "what's new" notes (paste from the changelog) whenever you like
+— the Release is already public and downloadable.
+
+> **Two ways to trigger the same build** (both wired in `.github/workflows/release.yml`):
+> 1. **Push the `v*` tag** (steps 4–5 above) → the workflow creates the public Release with the installers.
+> 2. **Publish a Release from the GitHub UI** (Releases → *Draft a new release* → create the `v0.1.0`
+>    tag → write notes → **Publish**) → the `release: published` trigger runs the same build, and the
+>    installers attach to the Release you just published.
+>
+> ⚠️ Do **not** mix them by publishing a Release in the UI *and* expecting a tag push to also fire —
+> a tag/Release created in the UI does **not** emit a tag-`push` event (that's what the
+> `release: published` trigger is for).
 
 ### 7. Verify
 
@@ -196,22 +211,30 @@ anything (no tag, no upload). Use it for local testing; use the tag + workflow f
 ## Troubleshooting
 
 - **One OS job failed, the others passed.** Open the failed job in the Actions tab, read the log,
-  fix, and re-run *just that job* ("Re-run failed jobs"). The draft Release keeps the assets the
+  fix, and re-run *just that job* ("Re-run failed jobs"). The Release keeps the assets the
   successful jobs already uploaded.
-- **The workflow didn't start at all.** The tag must match `v*` (start with `v`) and be *pushed*
-  (`git push origin v0.1.0`) — pushing the commit alone doesn't push tags. Confirm Actions is
-  enabled (one-time setup #2).
-- **"Resource not accessible by integration" / release upload denied.** The workflow needs
-  `permissions: contents: write` (already set in `release.yml`). Also check **Settings → Actions →
-  General → Workflow permissions** is set to "Read and write permissions".
-- **I tagged the wrong commit / wrong version.** Delete the tag and the draft, then redo:
+- **The workflow didn't start at all.** Either **push a `v*` tag** with `git push origin v0.1.0`
+  (pushing the commit alone doesn't push tags), **or** publish a Release from the GitHub UI (the
+  `release: published` trigger). A tag/Release created in the UI does **not** emit a tag-`push`
+  event, so `push: tags` alone would skip it. Confirm Actions is enabled (one-time setup #2).
+- **Jobs are green but no installers are attached — log says `existing type not compatible with
+  publishing type … existingType=release publishingType=draft`.** This is the old `draft` behavior:
+  a published Release already exists for the tag but the config wanted a draft. Fixed by
+  `publish.releaseType: release` in `electron-builder.yml`. If you hit it on a release built from an
+  older commit, either delete that published Release (keep the tag) and re-run the jobs, or rebuild
+  from a commit that includes `releaseType: release`.
+- **"Resource not accessible by integration" / release upload denied.** The workflow declares
+  `permissions: contents: write` in `release.yml`, which **overrides** an org/repo read-only default
+  for the `GITHUB_TOKEN` — so the greyed-out "Read repository contents…" default under **Settings →
+  Actions → General → Workflow permissions** is fine and does not need changing.
+- **I tagged the wrong commit / wrong version.** Delete the tag and the Release, then redo:
 
   ```sh
   git push --delete origin v0.1.0     # remove the remote tag
   git tag -d v0.1.0                    # remove the local tag
   ```
 
-  Delete the draft Release on github.com, fix things, and tag again.
+  Delete the Release on github.com, fix things, and tag again.
 - **`.deb` fails to build on the Linux runner.** Rare; usually a missing `fakeroot`/`dpkg`. Add a
   step before packaging on the ubuntu job: `sudo apt-get update && sudo apt-get install -y fakeroot`.
 - **Two Mac assets have the same name.** The Intel build is the plain `.dmg`; Apple Silicon is

@@ -5,17 +5,21 @@ appId: org.brainana.viewer
 productName: Brainana Viewer
 copyright: Brainana
 
-# Where `--publish` uploads the built installers. `provider: github` targets a GitHub Release,
-# uploaded to a DRAFT by default (you review + click Publish). owner/repo are pinned to the lab
-# repo `arcaro-lab/brainana_tools` — that is where 1.0.0+ releases live. The tag-triggered
-# workflow (.github/workflows/release.yml) must therefore run ON arcaro-lab (push the `v*` tag
-# there): its GITHUB_TOKEN only has write access to the repo it runs in, so a run on a fork
-# could not publish here. Requires Actions enabled on arcaro-lab. A plain local
-# `npm run dist:desktop` never publishes (it omits `--publish`). See docs/publishing.md.
+# Where `--publish` uploads the built installers. `provider: github` targets a GitHub Release.
+# `releaseType: release` uploads straight into the PUBLISHED release for the tag — this matches
+# the "write notes + Publish in the GitHub UI, then let the workflow attach the installers" flow.
+# (The default `draft` REFUSES to upload when a published release already exists for the tag —
+# `existingType=release` vs `publishingType=draft` — silently skipping every installer.)
+# owner/repo are pinned to the lab repo `arcaro-lab/brainana_tools` — that is where 1.0.0+
+# releases live. The workflow (.github/workflows/release.yml) must therefore run ON arcaro-lab:
+# its GITHUB_TOKEN only has write access to the repo it runs in, so a run on a fork could not
+# publish here. Requires Actions enabled on arcaro-lab. A plain local `npm run dist:desktop`
+# never publishes (it omits `--publish`). See docs/publishing.md.
 publish:
   provider: github
   owner: arcaro-lab
   repo: brainana_tools
+  releaseType: release
 
 # Ad-hoc code-sign the packaged macOS .app (see the hook for the full rationale). Turns
 # Gatekeeper's "app is damaged" hard block into the softer "could not verify" prompt.
