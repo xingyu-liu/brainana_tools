@@ -16,7 +16,7 @@ You never hand users the source code or ask them to run `npm`. Instead:
 ```
    your source (this repo, on GitHub)
               │
-              │  you push a version tag, e.g.  v0.1.0
+              │  you Publish a Release in the GitHub UI (it creates the v0.1.0 tag)
               ▼
    GitHub Actions builds the installers
    ├─ macOS runner  → Brainana Viewer .dmg / .zip  (Apple Silicon AND Intel)
@@ -112,56 +112,50 @@ git commit -m "Release 1.0.0"                    # record it on main
 git push origin main                             # upload the commit
 ```
 
-### 4. Tag the release and push the tag
+### 4. Publish the Release (this starts the build)
 
-The **tag is the trigger** — pushing it is what starts the build.
+Do this from the GitHub web UI — **publishing the Release is the trigger, and it creates the tag
+for you.** You do NOT push a git tag separately.
 
-```sh
-git tag v0.1.0                                   # mark this commit as version 0.1.0
-git push origin v0.1.0                           # pushing the tag launches the release workflow
-```
+1. On github.com → **arcaro-lab/brainana_tools** → **Releases** → **Draft a new release**.
+2. **Choose a tag** → type `v1.0.0` → pick **"Create new tag: v1.0.0 on publish"**.
+   (The tag must start with `v` and equal `package.json`'s `version`.)
+3. **Target** → **`main`** (the branch tip you pushed in step 3, which carries this version).
+4. Write a short "what's new" summary (paste from the changelog).
+5. Click **Publish release**.
 
-> The tag must start with `v` (e.g. `v0.1.0`) — that's the pattern the workflow listens for.
-> Keep the tag's number equal to `package.json`'s `version`.
+At that moment GitHub creates the `v1.0.0` tag *and* publishes the Release. The
+`release: published` trigger then starts the build, and because `electron-builder.yml` sets
+`publish.releaseType: release`, all three OS jobs upload their installers **into the Release you
+just published** — no draft, no review gate, and no duplicate-release race (the one published
+Release already exists for every job to target).
+
+> **Command-line alternative.** Instead of the UI you *can* push a tag —
+> `git tag v1.0.0 && git push origin v1.0.0` — which starts the same workflow via `push: tags`.
+> Use one path **or** the other, never both. ⚠️ A tag/Release created in the **UI does not** emit a
+> tag-`push` event, which is exactly why the `release: published` trigger exists — so if you prefer
+> the UI (recommended), don't also expect a `push: tags` run.
 
 ### 5. Watch the build
 
-On github.com → your repo → **Actions** tab → the **Release** run. Three jobs run in parallel
-(ubuntu / windows / macos). They take roughly 5–15 minutes. Each one builds its installers and
-uploads them to the **published** Release for the `v0.1.0` tag.
-
-> **`publish.releaseType: release`** (set in `electron-builder.yml`) means the installers attach
-> to a **published, public** Release — there is no draft-review gate. If no Release exists for the
-> tag yet, the workflow **creates one, already public**; if you pre-created/published a Release for
-> the tag (see the alternative trigger below), the installers attach to that one.
+On github.com → **Actions** tab → the **Release** run. Three jobs run in parallel
+(ubuntu / windows / macos), roughly 5–15 minutes. Each builds its installers and uploads them into
+the `v1.0.0` Release you published in step 4.
 
 ### 6. Confirm the Release assets
 
-Go to the **Releases** page (repo home → "Releases" on the right). Open the `v0.1.0` Release and
-confirm these assets are attached:
+Open the `v1.0.0` Release on the **Releases** page and confirm these assets are attached:
 
 | OS | Files a user downloads |
 |---|---|
-| macOS, Apple Silicon (M1/M2/M3…) | `Brainana Viewer-0.1.0-arm64.dmg` |
-| macOS, Intel | `Brainana Viewer-0.1.0.dmg` (x64) |
-| Windows | `Brainana Viewer Setup 0.1.0.exe` |
-| Linux | `Brainana Viewer-0.1.0.AppImage`, `brainana-viewer_0.1.0_amd64.deb` |
+| macOS, Apple Silicon (M1/M2/M3…) | `Brainana Viewer-1.0.0-arm64.dmg` |
+| macOS, Intel | `Brainana Viewer-1.0.0.dmg` (x64) |
+| Windows | `Brainana Viewer Setup 1.0.0.exe` |
+| Linux | `Brainana Viewer-1.0.0.AppImage`, `brainana-viewer_1.0.0_amd64.deb` |
 
 (`.zip` copies of the Mac apps and `.yml`/`.blockmap` metadata files also appear — those are for
-future auto-update; leave them attached.)
-
-Click **Edit** to add or refine the "what's new" notes (paste from the changelog) whenever you like
-— the Release is already public and downloadable.
-
-> **Two ways to trigger the same build** (both wired in `.github/workflows/release.yml`):
-> 1. **Push the `v*` tag** (steps 4–5 above) → the workflow creates the public Release with the installers.
-> 2. **Publish a Release from the GitHub UI** (Releases → *Draft a new release* → create the `v0.1.0`
->    tag → write notes → **Publish**) → the `release: published` trigger runs the same build, and the
->    installers attach to the Release you just published.
->
-> ⚠️ Do **not** mix them by publishing a Release in the UI *and* expecting a tag push to also fire —
-> a tag/Release created in the UI does **not** emit a tag-`push` event (that's what the
-> `release: published` trigger is for).
+future auto-update; leave them attached.) You can **Edit** the notes any time — the Release is
+already public and downloadable.
 
 ### 7. Verify
 
