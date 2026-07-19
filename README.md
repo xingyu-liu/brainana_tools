@@ -5,8 +5,8 @@
 # Brainana Viewer
 
 Cross-platform NiiVue viewer for per-subject (`sub-*`) output of the
-[**Brainana**](https://github.com/xingyu-liu/brainana) macaque MRI pipeline
-([preprint on bioRxiv](https://www.biorxiv.org/content/10.64898/2026.06.03.729972v1)).
+[**Brainana**](https://github.com/xingyu-liu/brainana) macaque MRI preprocessing pipeline
+([preprint](https://www.biorxiv.org/content/10.64898/2026.06.03.729972v1)).
 
 [![License: AGPL v3](https://img.shields.io/badge/License-AGPL--v3-blue.svg)](LICENSE)
 
@@ -16,8 +16,7 @@ Cross-platform NiiVue viewer for per-subject (`sub-*`) output of the
 
 ## Download & install
 
-Grab the app for your operating system from the
-**[Releases page](https://github.com/arcaro-lab/brainana_tools/releases/latest)** — no
+Grab the app for your operating system from the **[Releases page](../../releases/latest)** — no
 Node, no build, no command line. Pick the file that matches your system:
 
 | Your system | Download |
@@ -96,7 +95,7 @@ See `packages/core-server/security.mjs`.
 If you use the Brainana Viewer or the Brainana pipeline in your research, please cite the
 Brainana preprint and link the software:
 
-- **Paper:** Brainana — bioRxiv preprint,
+- **Paper:** Brainana — preprint,
   <https://www.biorxiv.org/content/10.64898/2026.06.03.729972v1>
 - **Pipeline:** <https://github.com/xingyu-liu/brainana>
 - **Viewer:** this repository.

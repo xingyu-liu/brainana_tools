@@ -259,7 +259,7 @@ export function mountDashboard(root: HTMLElement, deps: Deps): void {
   const toolbar = h('header', { class: 'toolbar' }, [
     // col 1: title (row 1) · version (row 2)
     h('div', { class: 'tb-cell brand' }, ['Brainana Viewer']),
-    h('div', { class: 'tb-cell' }, [h('span', { class: 'badge' }, [`v${'0.1.0'}`])]),
+    h('div', { class: 'tb-cell' }, [h('span', { class: 'badge' }, [`v${__APP_VERSION__}`])]),
     tbDivide(),
     // col 2: Dataset (row 1) · Monkey (row 2)
     h('div', { class: 'tb-cell' }, [datasetBtn]),
