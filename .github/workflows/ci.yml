@@ -24,7 +24,12 @@ jobs:
           cache: npm
 
       - name: Install dependencies
+        # CI never launches Electron (tests are headless server + built frontend, build is
+        # tsc + vite), so skip the ~100 MB per-OS binary download — the biggest macOS/Windows
+        # time sink. Packaging in release.yml is unaffected (separate workflow).
         run: npm ci
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
 
       - name: Generate version module
         run: npm run generate-version
