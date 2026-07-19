@@ -8,9 +8,13 @@
 import { spawnSync } from 'node:child_process'
 import { readdirSync, existsSync } from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
+// Preloaded into every test process so a late unhandledRejection/uncaughtException (after the
+// test already printed its summary) becomes a non-zero exit instead of a silent false PASS.
+const harnessUrl = pathToFileURL(path.join(root, 'tests', '_harness.mjs')).href
 
 // Collect *_test.mjs files directly under a given directory (non-recursive).
 function testsIn(dir) {
@@ -42,7 +46,13 @@ if (tests.length === 0) {
   process.exit(1)
 }
 
-const SKIP_RE = /:\s*skipped\s*$/m
+// A test signals a skip with a dedicated summary line `<name>: skipped` — matched as a whole
+// line so an incidental "...: skipped" logged mid-run can't mis-classify a real pass as a skip.
+const SKIP_RE = /^\S*:\s*skipped\s*$/m
+// A genuine pass prints at least one `  ok - <name>` assertion line. Requiring evidence of work
+// means a test that exits 0 having run zero assertions (empty loop, early return, silent crash
+// before any output) is caught instead of counted as PASS.
+const OK_RE = /^\s*ok\s*-\s/m
 
 let failed = 0
 let skipped = 0
@@ -52,14 +62,16 @@ for (const test of tests) {
   // Capture stdout so we can classify skip vs pass, then echo it through unchanged.
   // A per-file timeout guarantees one hung test (e.g. a server that never closes) fails
   // fast instead of stalling the whole matrix leg until CI's hard timeout.
-  const result = spawnSync(process.execPath, [test], {
+  const result = spawnSync(process.execPath, ['--import', harnessUrl, test], {
     cwd: root,
     encoding: 'utf8',
     stdio: ['inherit', 'pipe', 'inherit'],
     timeout: 120000,
     killSignal: 'SIGKILL',
+    maxBuffer: 32 * 1024 * 1024,
   })
   if (result.stdout) process.stdout.write(result.stdout)
+  const out = result.stdout || ''
   // spawnSync reports a timeout as ETIMEDOUT with status === null and the kill signal set.
   const timedOut = result.error?.code === 'ETIMEDOUT' || result.signal === 'SIGKILL'
   if (timedOut) {
@@ -68,9 +80,14 @@ for (const test of tests) {
   } else if (result.status !== 0) {
     failed += 1
     console.log(`  --> FAIL (exit ${result.status})`)
-  } else if (SKIP_RE.test(result.stdout || '')) {
+  } else if (SKIP_RE.test(out)) {
     skipped += 1
     console.log('  --> SKIP')
+  } else if (!OK_RE.test(out)) {
+    // Exited 0, not a skip, but produced no assertion — treat "no work" as a failure so a
+    // broken/empty test can never masquerade as passing.
+    failed += 1
+    console.log('  --> FAIL (no assertions ran — 0 checks)')
   } else {
     console.log('  --> PASS')
   }
