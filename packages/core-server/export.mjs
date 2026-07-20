@@ -5,6 +5,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { pipeline } from 'node:stream/promises'
 
 function exists(p) {
   try {
@@ -26,14 +27,10 @@ export async function writeStreamAtomic(readable, destination, overwrite) {
   await fsp.mkdir(path.dirname(destination), { recursive: true })
   if (!overwrite && exists(destination)) return { exists: true }
   const temp = `${destination}.${tempSuffix()}`
+  const out = fs.createWriteStream(temp, { flags: 'wx' })
   try {
-    await new Promise((resolve, reject) => {
-      const out = fs.createWriteStream(temp, { flags: 'wx' })
-      readable.on('error', reject)
-      out.on('error', reject)
-      out.on('finish', resolve)
-      readable.pipe(out)
-    })
+    // pipeline propagates a source error and destroys `out` (closing its fd), unlike bare pipe().
+    await pipeline(readable, out)
     if (!overwrite && exists(destination)) {
       await fsp.unlink(temp).catch(() => {})
       return { exists: true }
@@ -41,6 +38,10 @@ export async function writeStreamAtomic(readable, destination, overwrite) {
     await fsp.rename(temp, destination)
     return { exists: false, bytes: fs.statSync(destination).size }
   } catch (error) {
+    // Wait for the write stream to fully close before unlinking: on a synchronous source
+    // error the temp file may not be created until after `out` opens, so removing it eagerly
+    // would race that open and leave the partial file behind.
+    if (!out.closed) await new Promise((resolve) => out.once('close', resolve))
     await fsp.unlink(temp).catch(() => {})
     throw error
   }
